@@ -1,0 +1,29 @@
+.env
+.env.local
+.env.production
+!.env.example
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# Databases and Local Data
+*.db
+*.sqlite3
+*.log
+
+# System and Agent Generated
+.system_generated/
+scratch/
+.idea/
+.vscode/
+
+# MetaTrader 5 User Files
+*.set

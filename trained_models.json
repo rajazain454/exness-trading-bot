@@ -1,0 +1,146 @@
+{
+    "BTCUSDm": {
+        "symbol": "BTCUSDm",
+        "is_crypto": true,
+        "optimal_parameters": {
+            "chop_max": 61.8,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 1.8,
+            "base_tp_mult": 2.5
+        },
+        "one_year_performance": {
+            "total_trades": 98,
+            "win_rate": 75.5,
+            "total_r_gain": 6.7,
+            "profit_factor": 1.28,
+            "max_drawdown_r": 9.6,
+            "expected_value_r": 0.07
+        }
+    },
+    "ETHUSDm": {
+        "symbol": "ETHUSDm",
+        "is_crypto": true,
+        "optimal_parameters": {
+            "chop_max": 58.0,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 1.5,
+            "base_tp_mult": 2.5
+        },
+        "one_year_performance": {
+            "total_trades": 64,
+            "win_rate": 54.7,
+            "total_r_gain": -14.18,
+            "profit_factor": 0.51,
+            "max_drawdown_r": 16.12,
+            "expected_value_r": -0.22
+        }
+    },
+    "SOLUSDm": {
+        "symbol": "SOLUSDm",
+        "is_crypto": true,
+        "optimal_parameters": {
+            "chop_max": 61.8,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 1.5,
+            "base_tp_mult": 3.0
+        },
+        "one_year_performance": {
+            "total_trades": 96,
+            "win_rate": 70.8,
+            "total_r_gain": 2.76,
+            "profit_factor": 1.1,
+            "max_drawdown_r": 8.4,
+            "expected_value_r": 0.03
+        }
+    },
+    "XRPUSDm": {
+        "symbol": "XRPUSDm",
+        "is_crypto": true,
+        "optimal_parameters": {
+            "chop_max": 58.0,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 1.5,
+            "base_tp_mult": 3.0
+        },
+        "one_year_performance": {
+            "total_trades": 67,
+            "win_rate": 64.2,
+            "total_r_gain": -1.11,
+            "profit_factor": 0.95,
+            "max_drawdown_r": 9.3,
+            "expected_value_r": -0.02
+        }
+    },
+    "EURUSDm": {
+        "symbol": "EURUSDm",
+        "is_crypto": false,
+        "optimal_parameters": {
+            "chop_max": 58.0,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 1.5,
+            "base_tp_mult": 3.0
+        },
+        "one_year_performance": {
+            "total_trades": 35,
+            "win_rate": 77.1,
+            "total_r_gain": 1.64,
+            "profit_factor": 1.21,
+            "max_drawdown_r": 2.6,
+            "expected_value_r": 0.05
+        }
+    },
+    "GBPUSDm": {
+        "symbol": "GBPUSDm",
+        "is_crypto": false,
+        "optimal_parameters": {
+            "chop_max": 58.0,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 1.8,
+            "base_tp_mult": 3.0
+        },
+        "one_year_performance": {
+            "total_trades": 48,
+            "win_rate": 70.8,
+            "total_r_gain": 2.7,
+            "profit_factor": 1.19,
+            "max_drawdown_r": 3.7,
+            "expected_value_r": 0.06
+        }
+    },
+    "USDJPYm": {
+        "symbol": "USDJPYm",
+        "is_crypto": false,
+        "optimal_parameters": {
+            "chop_max": 58.0,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 1.5,
+            "base_tp_mult": 2.5
+        },
+        "one_year_performance": {
+            "total_trades": 28,
+            "win_rate": 71.4,
+            "total_r_gain": -0.3,
+            "profit_factor": 0.96,
+            "max_drawdown_r": 4.1,
+            "expected_value_r": -0.01
+        }
+    },
+    "AUDUSDm": {
+        "symbol": "AUDUSDm",
+        "is_crypto": false,
+        "optimal_parameters": {
+            "chop_max": 58.0,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 1.5,
+            "base_tp_mult": 3.0
+        },
+        "one_year_performance": {
+            "total_trades": 41,
+            "win_rate": 58.5,
+            "total_r_gain": -12.7,
+            "profit_factor": 0.25,
+            "max_drawdown_r": 12.8,
+            "expected_value_r": -0.31
+        }
+    }
+}
