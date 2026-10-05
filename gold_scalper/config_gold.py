@@ -54,8 +54,8 @@ BAR_COOLDOWN_M5_COUNT = 1    # Cooldown: Require at least 1 full new completed M
 
 # Dynamic ATR Stop Loss & Take Profit for Gold
 ATR_PERIOD = 14
-ATR_SL_MULTIPLIER = 0.9      # Stop Loss = 0.9 x ATR (~$2.20 - $2.80 on Gold for micro accounts)
-ATR_TP_MULTIPLIER = 2.0      # Take Profit = 2.0 x SL (~$4.40 - $5.60 on Gold, 1:2 RR)
+ATR_SL_MULTIPLIER = 1.3      # Stop Loss = 1.3 x ATR (~$3.80 - $5.20 breathing room on Gold)
+ATR_TP_MULTIPLIER = 2.0      # Take Profit = 2.0 x SL (~$7.60 - $10.40 on Gold, 1:2 RR)
 
 # Smart Partial Take-Profit & Break-Even
 USE_PARTIAL_TP = True
