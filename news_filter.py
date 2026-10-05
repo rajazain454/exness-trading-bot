@@ -13,6 +13,7 @@ class EconomicNewsFilter:
     """
 
     FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    CACHE_FILE = "news_calendar_cache.json"
 
     def __init__(self, pre_buffer_mins: int = 30, post_buffer_mins: int = 30):
         self.pre_buffer = timedelta(minutes=pre_buffer_mins)
@@ -20,6 +21,47 @@ class EconomicNewsFilter:
         self.cached_events: List[Dict[str, Any]] = []
         self.last_fetch_time: Optional[datetime] = None
         self.cache_duration = timedelta(hours=3)
+        self.load_disk_cache()
+
+    def load_disk_cache(self):
+        """Loads events from local disk cache if available."""
+        import os, json
+        if os.path.exists(self.CACHE_FILE):
+            try:
+                with open(self.CACHE_FILE, "r") as f:
+                    raw = json.load(f)
+                    events = []
+                    for ev in raw:
+                        events.append({
+                            "title": ev.get("title", ""),
+                            "country": ev.get("country", "").upper(),
+                            "datetime_utc": datetime.fromisoformat(ev["datetime_utc"]),
+                            "forecast": ev.get("forecast", ""),
+                            "previous": ev.get("previous", "")
+                        })
+                    self.cached_events = events
+                    self.last_fetch_time = datetime.now(timezone.utc)
+                    logger.info(f"Loaded {len(self.cached_events)} events from disk cache.")
+            except Exception:
+                pass
+
+    def save_disk_cache(self):
+        """Saves parsed events to local disk cache."""
+        import json
+        try:
+            serialized = []
+            for ev in self.cached_events:
+                serialized.append({
+                    "title": ev["title"],
+                    "country": ev["country"],
+                    "datetime_utc": ev["datetime_utc"].isoformat(),
+                    "forecast": ev["forecast"],
+                    "previous": ev["previous"]
+                })
+            with open(self.CACHE_FILE, "w") as f:
+                json.dump(serialized, f)
+        except Exception:
+            pass
 
     def extract_currencies(self, symbol: str) -> List[str]:
         """Extracts 3-letter currency codes from a trading symbol (e.g. EURUSDm -> EUR, USD)."""
@@ -29,23 +71,29 @@ class EconomicNewsFilter:
         return ["USD", "EUR"]
 
     def fetch_calendar(self) -> bool:
-        """Fetches and parses high-impact economic news."""
+        """Fetches and parses high-impact economic news with rate-limit protection."""
         now = datetime.now(timezone.utc)
-        if self.last_fetch_time and (now - self.last_fetch_time) < self.cache_duration and self.cached_events:
-            return True
+        if self.last_fetch_time and (now - self.last_fetch_time) < self.cache_duration:
+            return len(self.cached_events) > 0
+
+        # Set last fetch time immediately to prevent 3-second rapid spam on 429
+        self.last_fetch_time = now
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json"
+        }
 
         try:
             logger.info("Fetching weekly economic calendar from ForexFactory feed...")
-            res = requests.get(self.FEED_URL, timeout=8)
+            res = requests.get(self.FEED_URL, headers=headers, timeout=8)
             if res.status_code == 200:
                 raw_events = res.json()
                 high_impact = []
                 for ev in raw_events:
                     if ev.get("impact") == "High":
                         try:
-                            # Parses ISO 8601 with offset
                             ev_time = datetime.fromisoformat(ev["date"])
-                            # Normalize to UTC
                             ev_time_utc = ev_time.astimezone(timezone.utc)
                             high_impact.append({
                                 "title": ev.get("title", ""),
@@ -57,15 +105,17 @@ class EconomicNewsFilter:
                         except Exception:
                             continue
                 self.cached_events = high_impact
-                self.last_fetch_time = now
+                self.save_disk_cache()
                 logger.info(f"Loaded {len(self.cached_events)} high-impact economic events.")
                 return True
             else:
-                logger.warning(f"Could not load news calendar (HTTP {res.status_code}).")
-                return False
+                logger.warning(f"ForexFactory calendar returned HTTP {res.status_code}. Using cached events ({len(self.cached_events)}).")
+                # Back off for 30 minutes on rate limit
+                self.last_fetch_time = now - self.cache_duration + timedelta(minutes=30)
+                return len(self.cached_events) > 0
         except Exception as e:
-            logger.warning(f"News calendar fetch failed: {e}. Defaulting to safe state.")
-            return False
+            logger.warning(f"News calendar fetch failed: {e}. Using cached events ({len(self.cached_events)}).")
+            return len(self.cached_events) > 0
 
     def is_news_blackout(self, symbol: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
         """

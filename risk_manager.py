@@ -87,6 +87,9 @@ class RiskManager:
                 logger.warning(f"Anti-revenge cooldown triggered! No new trades until {self.cooldown_until.strftime('%H:%M:%S UTC')}")
                 self.notifier.notify_cooldown_activated(self.consecutive_losses, config.COOLDOWN_HOURS)
 
+    # Backward compatibility alias
+    record_trade_result = register_trade_outcome
+
     def check_cooldown(self) -> Tuple[bool, str]:
         """Verifies if the bot is currently in a consecutive loss cooldown."""
         if self.cooldown_until is not None:
@@ -272,16 +275,31 @@ class RiskManager:
             sl_mult = config.ATR_SL_MULTIPLIER
             tp_mult = default_tp_mult
 
-        if config.USE_DYNAMIC_ATR_SLTP and atr_value > 0:
-            atr_in_pips = atr_value / pip_size
-            sl_pips = round(max(config.MIN_SL_PIPS, min(config.MAX_SL_PIPS, atr_in_pips * sl_mult)), 1)
-            tp_pips = round(sl_pips * (tp_mult / sl_mult), 1)
-        else:
-            sl_pips = config.STATIC_STOP_LOSS_PIPS
-            tp_pips = config.STATIC_TAKE_PROFIT_PIPS
+        is_crypto = any(c in symbol for c in ["BTC", "ETH", "SOL", "XRP"])
 
-        sl_offset = sl_pips * pip_size
-        tp_offset = tp_pips * pip_size
+        if is_crypto:
+            # For Crypto, calculate SL/TP directly from ATR price units or minimum spread clearance
+            spread_dist = tick.ask - tick.bid
+            if config.USE_DYNAMIC_ATR_SLTP and atr_value > 0:
+                sl_dist = max(atr_value * sl_mult, spread_dist * 3.0)
+            else:
+                sl_dist = max(150.0, spread_dist * 3.0)
+            tp_dist = sl_dist * (tp_mult / sl_mult)
+            sl_pips = round(sl_dist / pip_size, 1)
+            tp_pips = round(tp_dist / pip_size, 1)
+            sl_offset = sl_dist
+            tp_offset = tp_dist
+        else:
+            if config.USE_DYNAMIC_ATR_SLTP and atr_value > 0:
+                atr_in_pips = atr_value / pip_size
+                sl_pips = round(max(config.MIN_SL_PIPS, min(config.MAX_SL_PIPS, atr_in_pips * sl_mult)), 1)
+                tp_pips = round(sl_pips * (tp_mult / sl_mult), 1)
+            else:
+                sl_pips = config.STATIC_STOP_LOSS_PIPS
+                tp_pips = config.STATIC_TAKE_PROFIT_PIPS
+
+            sl_offset = sl_pips * pip_size
+            tp_offset = tp_pips * pip_size
 
         if signal == "BUY":
             entry_price = tick.ask
@@ -297,9 +315,14 @@ class RiskManager:
         lot = self.calculate_lot_size(acc["equity"])
 
         # Mathematical Expected Value (EV) Gatekeeper
-        pip_dollar_value = (lot / 0.01) * 0.10
-        sl_usd = sl_pips * pip_dollar_value
-        tp_usd = tp_pips * pip_dollar_value
+        if is_crypto:
+            sl_usd = sl_offset * lot
+            tp_usd = tp_offset * lot
+        else:
+            pip_dollar_value = (lot / 0.01) * 0.10
+            sl_usd = sl_pips * pip_dollar_value
+            tp_usd = tp_pips * pip_dollar_value
+
         stats = self.journal.get_all_time_stats()
         win_prob = (stats.get("win_rate", 60.0) / 100.0) if stats.get("total", 0) >= 5 else 0.60
         ev_usd, ev_ratio = QuantitativeEngine.calculate_expected_value(win_prob, tp_usd, sl_usd)

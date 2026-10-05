@@ -18,6 +18,7 @@ env/
 *.db
 *.sqlite3
 *.log
+news_calendar_cache.json
 
 # System and Agent Generated
 .system_generated/

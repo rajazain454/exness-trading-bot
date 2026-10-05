@@ -34,7 +34,7 @@ class OrderManager:
             return mt5.ORDER_FILLING_IOC
         elif filling_mode & 1:
             return mt5.ORDER_FILLING_FOK
-        return mt5.ORDER_FILLING_RETURN
+        return mt5.ORDER_FILLING_IOC
 
     def open_position(self, symbol: str, signal: str, trade_params: Dict[str, float]) -> Optional[int]:
         """
@@ -202,15 +202,26 @@ class OrderManager:
             return
 
         pip_size = self.connector.get_pip_size(symbol)
-        be_trigger = config.BREAKEVEN_TRIGGER_PIPS * pip_size
-        be_offset = config.BREAKEVEN_OFFSET_PIPS * pip_size
-        trail_dist = config.TRAILING_DISTANCE_PIPS * pip_size
-        trail_step = config.TRAILING_STEP_PIPS * pip_size
-        partial_tp_dist = config.PARTIAL_TP_PIPS * pip_size
+        is_crypto = any(c in symbol for c in ["BTC", "ETH", "SOL", "XRP"])
 
         for pos in positions:
             ticket = pos.ticket
             pos_meta = self.tracked_positions.get(ticket, {})
+
+            # Derive dynamic targets from actual initial stop distance if available
+            risk_dist = abs(pos.price_open - pos.sl) if pos.sl > 0 else 0.0
+            if risk_dist > 0:
+                be_trigger = risk_dist * 0.75
+                be_offset = risk_dist * 0.10
+                trail_dist = risk_dist
+                trail_step = risk_dist * 0.20
+                partial_tp_dist = risk_dist * 1.0
+            else:
+                be_trigger = config.BREAKEVEN_TRIGGER_PIPS * pip_size
+                be_offset = config.BREAKEVEN_OFFSET_PIPS * pip_size
+                trail_dist = config.TRAILING_DISTANCE_PIPS * pip_size
+                trail_step = config.TRAILING_STEP_PIPS * pip_size
+                partial_tp_dist = config.PARTIAL_TP_PIPS * pip_size
 
             # BUY Position Management
             if pos.type == mt5.ORDER_TYPE_BUY:
@@ -223,8 +234,11 @@ class OrderManager:
                         if self.close_partial_position(pos, close_vol):
                             pos_meta["partial_closed"] = True
                             remaining_vol = round(pos.volume - close_vol, 2)
-                            pips_banked = current_profit_distance / pip_size
-                            pnl_banked = round(pips_banked * (close_vol / 0.01) * 0.10, 2)
+                            if is_crypto:
+                                pnl_banked = round(current_profit_distance * close_vol, 2)
+                            else:
+                                pips_banked = current_profit_distance / pip_size
+                                pnl_banked = round(pips_banked * (close_vol / 0.01) * 0.10, 2)
 
                             logger.info(f"[Partial-TP] Banked +${pnl_banked:.2f} on BUY #{ticket}. Remaining: {remaining_vol} lot.")
                             self.update_sl(pos, be_price)
@@ -257,8 +271,11 @@ class OrderManager:
                         if self.close_partial_position(pos, close_vol):
                             pos_meta["partial_closed"] = True
                             remaining_vol = round(pos.volume - close_vol, 2)
-                            pips_banked = current_profit_distance / pip_size
-                            pnl_banked = round(pips_banked * (close_vol / 0.01) * 0.10, 2)
+                            if is_crypto:
+                                pnl_banked = round(current_profit_distance * close_vol, 2)
+                            else:
+                                pips_banked = current_profit_distance / pip_size
+                                pnl_banked = round(pips_banked * (close_vol / 0.01) * 0.10, 2)
 
                             logger.info(f"[Partial-TP] Banked +${pnl_banked:.2f} on SELL #{ticket}. Remaining: {remaining_vol} lot.")
                             self.update_sl(pos, be_price)

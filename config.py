@@ -112,7 +112,6 @@ PARTIAL_CLOSE_RATIO = 0.50
 # ==========================================
 BASE_LOT_SIZE = 0.01
 MAX_OPEN_POSITIONS = 1        # Strictly 1 position across account for $30 capital
-MAX_SPREAD_PIPS = 2.0
 
 ENABLE_COMPOUNDING = True
 CAPITAL_PER_001_LOT = 30.0

@@ -25,7 +25,7 @@ class QuantitativeEngine:
         Returns safe fraction of capital to risk (default Quarter-Kelly = 0.25).
         """
         if avg_loss_usd <= 0 or win_rate <= 0:
-            return 0.02  # Safe 2% fallback
+            return 0.01  # Minimum 1% risk floor
 
         p = min(0.95, max(0.05, win_rate / 100.0))
         b = avg_win_usd / (avg_loss_usd + 1e-9)

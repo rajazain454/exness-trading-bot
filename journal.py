@@ -1,7 +1,7 @@
 import sqlite3
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("TradeJournal")
@@ -66,9 +66,11 @@ class TradeJournal:
             except Exception:
                 pass  # Already exists
 
-    def record_entry(self, ticket: int, symbol: str, signal: str, lot: float, entry_price: float, sl: float, tp: float, latency_ms: float = 0.0, slippage_pips: float = 0.0):
+    def record_entry(self, ticket: int, symbol: str, signal: str = "BUY", lot: float = 0.01, entry_price: float = 0.0, sl: float = 0.0, tp: float = 0.0, latency_ms: float = 0.0, slippage_pips: float = 0.0, **kwargs):
         """Records a newly opened trade with execution latency and slippage."""
-        now_str = datetime.utcnow().isoformat() + "Z"
+        signal = kwargs.get("action", signal)
+        lot = kwargs.get("lot_size", lot)
+        now_str = datetime.now(timezone.utc).isoformat() + "Z"
         query = """
             INSERT OR REPLACE INTO trades (ticket, symbol, signal, lot, entry_price, sl, tp, entry_time, latency_ms, slippage_pips)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -76,9 +78,14 @@ class TradeJournal:
         self._execute(query, (ticket, symbol, signal, lot, entry_price, sl, tp, now_str, latency_ms, slippage_pips))
         logger.info(f"Journal: Trade #{ticket} ({symbol}) recorded. Latency: {latency_ms:.1f}ms | Slippage: {slippage_pips:.1f}p")
 
-    def record_exit(self, ticket: int, exit_price: float, pips: float, pnl_usd: float, balance_after: float, close_reason: str):
+    # Backward compatibility alias
+    log_entry = record_entry
+
+    def record_exit(self, ticket: int, exit_price: float, pips: float = 0.0, pnl_usd: float = 0.0, balance_after: float = 0.0, close_reason: str = "TP/SL", **kwargs):
         """Updates trade with exit price, realized profit, and duration."""
-        exit_time = datetime.utcnow()
+        pnl_usd = kwargs.get("realized_pnl", pnl_usd)
+        close_reason = kwargs.get("exit_reason", close_reason)
+        exit_time = datetime.now(timezone.utc)
         exit_time_str = exit_time.isoformat() + "Z"
 
         row = self._execute("SELECT entry_time FROM trades WHERE ticket = ?", (ticket,), fetch=True, fetchall=False)
@@ -100,9 +107,38 @@ class TradeJournal:
         self._execute(query, (exit_price, pips, pnl_usd, balance_after, exit_time_str, hold_minutes, outcome, close_reason, ticket))
         logger.info(f"Journal: Trade #{ticket} exit finalized. PnL: ${pnl_usd:.2f} ({outcome})")
 
+    # Backward compatibility alias
+    log_exit = record_exit
+
+    def get_trade(self, ticket: int) -> Optional[Dict[str, Any]]:
+        """Retrieves a single trade record as a dictionary."""
+        query = "SELECT ticket, symbol, signal, lot, entry_price, exit_price, sl, tp, pips, pnl_usd, outcome, close_reason, latency_ms, slippage_pips FROM trades WHERE ticket = ?"
+        row = self._execute(query, (ticket,), fetch=True, fetchall=False)
+        if not row:
+            return None
+        return {
+            "ticket": row[0],
+            "symbol": row[1],
+            "signal": row[2],
+            "lot": row[3],
+            "entry_price": row[4],
+            "exit_price": row[5],
+            "sl": row[6],
+            "tp": row[7],
+            "pips": row[8],
+            "realized_pnl": row[9],
+            "pnl_usd": row[9],
+            "status": "CLOSED" if row[5] is not None else "OPEN",
+            "outcome": row[10],
+            "close_reason": row[11],
+            "exit_reason": row[11],
+            "latency_ms": row[12],
+            "slippage_pips": row[13]
+        }
+
     def get_today_summary(self) -> Dict[str, Any]:
         """Calculates today's closed trades summary."""
-        today_prefix = datetime.utcnow().strftime("%Y-%m-%d")
+        today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         query = """
             SELECT outcome, pnl_usd, pips FROM trades 
             WHERE exit_time LIKE ? AND exit_time IS NOT NULL
