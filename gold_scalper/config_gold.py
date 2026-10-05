@@ -55,11 +55,13 @@ BAR_COOLDOWN_M5_COUNT = 1    # Cooldown: Require at least 1 full new completed M
 # Dynamic ATR Stop Loss & Take Profit for Gold
 ATR_PERIOD = 14
 ATR_SL_MULTIPLIER = 1.3      # Stop Loss = 1.3 x ATR (~$3.80 - $5.20 breathing room on Gold)
-ATR_TP_MULTIPLIER = 2.0      # Take Profit = 2.0 x SL (~$7.60 - $10.40 on Gold, 1:2 RR)
+ATR_TP_MULTIPLIER = 1.1      # Take Profit baseline multiplier (~1.1x ATR)
+TARGET_TP_MIN_USD = 3.50     # Floor: Minimum Take Profit $3.50 on 0.01 lot ($3.50 target)
+TARGET_TP_MAX_USD = 5.00     # Cap: Maximum Take Profit $5.00 on 0.01 lot ($5.00 target)
 
 # Smart Partial Take-Profit & Break-Even
 USE_PARTIAL_TP = True
-PARTIAL_TP_RATIO = 1.0       # Bank 50% profit at 1.0x ATR move
+PARTIAL_TP_RATIO = 0.6       # Bank partial / trigger BE at ~$1.80 - $2.20 move
 BREAK_EVEN_BUFFER_PIPS = 2.0 # Move SL to Entry + $0.20 when TP1 is banked
 
 # Trailing Stop

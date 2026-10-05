@@ -354,11 +354,16 @@ class GoldScalperBot:
             return
 
         digits = info.digits
-        entry = tick.ask if sig == "BUY" else tick.bid
         stop_dist = atr_val * config_gold.ATR_SL_MULTIPLIER
 
+        # Scalp TP explicitly targeted to $3.50 - $5.00 on Gold ($3.50 to $5.00 profit on 0.01 lot)
+        raw_tp = atr_val * getattr(config_gold, "ATR_TP_MULTIPLIER", 1.1)
+        min_tp = getattr(config_gold, "TARGET_TP_MIN_USD", 3.50)
+        max_tp = getattr(config_gold, "TARGET_TP_MAX_USD", 5.00)
+        tp_dist = round(min(max_tp, max(min_tp, raw_tp)), digits)
+
         sl = round(entry - stop_dist if sig == "BUY" else entry + stop_dist, digits)
-        tp = round(entry + (stop_dist * config_gold.ATR_TP_MULTIPLIER) if sig == "BUY" else entry - (stop_dist * config_gold.ATR_TP_MULTIPLIER), digits)
+        tp = round(entry + tp_dist if sig == "BUY" else entry - tp_dist, digits)
 
         # Lot size: 0.01 base or risk-based
         acc = mt5.account_info()
@@ -504,7 +509,7 @@ class GoldScalperBot:
         except Exception:
             acc_table.add_row("Today's Closed P&L", "$0.00 (0W/0L)")
 
-        acc_table.add_row("Active Scalper Target", "[bold cyan]1.0x ATR (Partial) / 2.0x ATR (Full)[/bold cyan]")
+        acc_table.add_row("Active Scalper Target", "[bold cyan]$3.50 - $5.00 Scalp Take-Profit[/bold cyan]")
         layout["account_box"].update(Panel(acc_table, title="[bold]Financial Health[/bold]", border_style="blue"))
 
         # Market Box
