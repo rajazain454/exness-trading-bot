@@ -15,7 +15,7 @@ class CurrencyStrengthMeter:
     Scores range from -10.0 (Extremely Weak) to +10.0 (Extremely Strong).
     """
 
-    CORE_PAIRS = ["EURUSDm", "GBPUSDm", "USDJPYm", "AUDUSDm"]
+    CORE_PAIRS = ["EURUSDm", "GBPUSDm", "USDJPYm", "AUDUSDm", "EURGBPm", "EURJPYm", "GBPJPYm"]
 
     def __init__(self, connector):
         self.connector = connector
@@ -25,7 +25,8 @@ class CurrencyStrengthMeter:
     def calculate_strengths(self) -> Dict[str, float]:
         """
         Calculates relative strength ratings for USD, EUR, GBP, JPY, and AUD.
-        Uses 14-period price momentum normalized by ATR across liquid pairs.
+        Uses 14-period multi-pair momentum across liquid majors and crosses
+        to triangulate true isolated currency strength.
         """
         raw_strengths = {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "JPY": 0.0, "AUD": 0.0}
 
@@ -49,9 +50,7 @@ class CurrencyStrengthMeter:
             base = clean[:3]
             quote = clean[3:6]
 
-            # Scale factor for USDJPY decimal difference
-            factor = 0.2 if quote == "JPY" else 1.0
-            impact = pct_move * factor * 5.0
+            impact = pct_move * 3.5
 
             if base in raw_strengths:
                 raw_strengths[base] += impact

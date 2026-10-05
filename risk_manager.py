@@ -33,6 +33,7 @@ class RiskManager:
         )
         self.today = date.today()
         self.daily_start_balance = 0.0
+        self.daily_peak_equity = 0.0
         self.consecutive_losses = 0
         self.cooldown_until: Optional[datetime] = None
         self.spread_history: Dict[str, List[float]] = {}
@@ -43,6 +44,7 @@ class RiskManager:
         acc = self.connector.get_account_summary()
         if acc:
             self.daily_start_balance = acc["balance"]
+            self.daily_peak_equity = max(acc["balance"], acc.get("equity", acc["balance"]))
             self.today = date.today()
             self.consecutive_losses = 0
             self.cooldown_until = None
@@ -147,9 +149,10 @@ class RiskManager:
 
         return True, "Weekend protection check passed"
 
-    def calculate_lot_size(self, equity: float) -> float:
+    def calculate_lot_size(self, equity: float, symbol: str = "", sl_pips: float = 0.0) -> float:
         """
         Calculates position size using Fractional Kelly Criterion (or smart compounding).
+        Dynamically adapts to the specific instrument's real pip/point dollar value and SL distance.
         f* = (p * b - (1 - p)) / b
         """
         if config.USE_KELLY_SIZING:
@@ -167,9 +170,16 @@ class RiskManager:
             )
             # Dollar risk budget
             risk_budget_usd = equity * safe_risk_fraction
-            # 1 pip on EURUSD with 0.01 lot = $0.10. 15 pip SL = $1.50 per 0.01 lot.
-            calculated_units = risk_budget_usd / 1.50
-            lot = round(max(config.BASE_LOT_SIZE, calculated_units * config.BASE_LOT_SIZE), 2)
+
+            # Dynamic risk per 0.01 lot based on instrument and sl_pips
+            if symbol and sl_pips > 0:
+                pip_val_001 = self.connector.get_pip_dollar_value(symbol, 0.01)
+                dollar_risk_001 = max(0.10, sl_pips * pip_val_001)
+                calculated_units = risk_budget_usd / dollar_risk_001
+            else:
+                calculated_units = risk_budget_usd / 1.50
+
+            lot = round(max(config.BASE_LOT_SIZE, calculated_units * 0.01), 2)
             return min(lot, config.MAX_LOT_SIZE)
 
         # Fallback compounding
@@ -217,9 +227,26 @@ class RiskManager:
         if not acc["trade_allowed"]:
             return False, "Algo Trading is disabled in MT5 options or on broker."
 
+        # Update intraday high-watermark
+        if acc["equity"] > self.daily_peak_equity:
+            self.daily_peak_equity = acc["equity"]
+
         daily_pnl = acc["equity"] - self.daily_start_balance
         if daily_pnl <= -config.MAX_DAILY_LOSS_USD:
             return False, f"Daily circuit breaker hit (-${abs(daily_pnl):.2f} / -${config.MAX_DAILY_LOSS_USD:.2f})."
+
+        # Intraday High-Watermark (Peak Equity) Trailing Profit-Lock Circuit Breaker
+        # If intraday realized/unrealized profit reached at least $3.00 (e.g. 10% on $30 capital)
+        # and equity gives back 50% or more of that peak profit, halt new trades to secure daily gains.
+        intraday_profit = self.daily_peak_equity - self.daily_start_balance
+        if intraday_profit >= 3.0:
+            giveback = self.daily_peak_equity - acc["equity"]
+            if giveback >= (intraday_profit * 0.50):
+                return False, (
+                    f"Intraday trailing profit-lock circuit breaker: Equity pulled back ${giveback:.2f} "
+                    f"from daily peak ${self.daily_peak_equity:.2f} (now ${acc['equity']:.2f}). "
+                    f"Protecting accumulated daily gains."
+                )
 
         spread_pips = self.connector.get_current_spread_pips(symbol)
         max_allowed_spread = getattr(config, "MAX_SPREAD_PIPS_CRYPTO", 2500.0) if any(c in symbol for c in ["BTC", "ETH", "SOL", "XRP"]) else getattr(config, "MAX_SPREAD_PIPS", 3.5)
@@ -230,7 +257,7 @@ class RiskManager:
         if not tick:
             return False, "Failed to retrieve live market tick."
 
-        lot_size = self.calculate_lot_size(acc["equity"])
+        lot_size = self.calculate_lot_size(acc["equity"], symbol=symbol)
         required_margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot_size, tick.ask)
         if required_margin is None:
             required_margin = (100000.0 * lot_size * tick.ask) / acc.get("leverage", 50)
@@ -312,16 +339,12 @@ class RiskManager:
         else:
             return None
 
-        lot = self.calculate_lot_size(acc["equity"])
+        lot = self.calculate_lot_size(acc["equity"], symbol=symbol, sl_pips=sl_pips)
 
         # Mathematical Expected Value (EV) Gatekeeper
-        if is_crypto:
-            sl_usd = sl_offset * lot
-            tp_usd = tp_offset * lot
-        else:
-            pip_dollar_value = (lot / 0.01) * 0.10
-            sl_usd = sl_pips * pip_dollar_value
-            tp_usd = tp_pips * pip_dollar_value
+        pip_dollar_value = self.connector.get_pip_dollar_value(symbol, lot)
+        sl_usd = sl_pips * pip_dollar_value
+        tp_usd = tp_pips * pip_dollar_value
 
         stats = self.journal.get_all_time_stats()
         win_prob = (stats.get("win_rate", 60.0) / 100.0) if stats.get("total", 0) >= 5 else 0.60

@@ -1,20 +1,44 @@
 import logging
 import requests
-from datetime import datetime
+import queue
+import threading
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 import config
 
 logger = logging.getLogger("Notifier")
 
 class DiscordNotifier:
-    """Sends real-time embeds and performance recaps to Discord."""
+    """Sends real-time embeds and performance recaps to Discord asynchronously."""
 
     def __init__(self, webhook_url: Optional[str] = None):
         self.webhook_url = webhook_url or config.DISCORD_WEBHOOK_URL
         self.enabled = bool(self.webhook_url and self.webhook_url.startswith("https://discord.com/api/webhooks/"))
+        self._queue = queue.Queue(maxsize=100)
+        self._stop_event = threading.Event()
+        self._worker_thread = None
+        if self.enabled:
+            self._worker_thread = threading.Thread(target=self._process_queue, daemon=True, name="DiscordWorker")
+            self._worker_thread.start()
+
+    def _process_queue(self):
+        """Background worker thread draining the notification queue."""
+        while not self._stop_event.is_set():
+            try:
+                payload = self._queue.get(timeout=0.5)
+                try:
+                    res = requests.post(self.webhook_url, json=payload, timeout=6)
+                    if res.status_code not in [200, 204]:
+                        logger.warning(f"Discord returned HTTP status {res.status_code}")
+                except Exception as e:
+                    logger.warning(f"Failed to deliver Discord notification: {e}")
+                finally:
+                    self._queue.task_done()
+            except queue.Empty:
+                continue
 
     def send_embed(self, title: str, description: str, color: int, fields: Optional[list] = None) -> bool:
-        """Helper to send a rich Discord embed."""
+        """Enqueues a rich Discord embed asynchronously without blocking the trading loop."""
         if not self.enabled:
             return False
 
@@ -22,7 +46,7 @@ class DiscordNotifier:
             "title": title,
             "description": description,
             "color": color,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "footer": {"text": "Exness Algorithmic Trading Suite"}
         }
 
@@ -36,11 +60,21 @@ class DiscordNotifier:
         }
 
         try:
-            res = requests.post(self.webhook_url, json=payload, timeout=6)
-            return res.status_code in [200, 204]
-        except Exception as e:
-            logger.warning(f"Failed to deliver Discord notification: {e}")
+            self._queue.put_nowait(payload)
+            return True
+        except queue.Full:
+            logger.warning("Discord notification queue is full (100 items). Dropping message.")
             return False
+
+    def shutdown(self, timeout: float = 2.0):
+        """Flushes remaining notifications and terminates worker."""
+        if not self.enabled or not self._worker_thread:
+            return
+        self._stop_event.set()
+        try:
+            self._worker_thread.join(timeout=timeout)
+        except Exception:
+            pass
 
     def notify_trade_opened(self, symbol: str, signal: str, ticket: int, entry: float, sl: float, tp: float, lot: float, balance: float):
         """Alerts when a new position is executed."""

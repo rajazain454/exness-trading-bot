@@ -83,28 +83,43 @@ class SmartMoneyConcepts:
 
     def detect_recent_fvg(self, m5_df: pd.DataFrame) -> Tuple[bool, str]:
         """
-        Detects recent Fair Value Gaps (FVG) / Imbalances in the last 15 M5 candles.
-        Bullish FVG: Candle[i-2] High < Candle[i] Low
-        Bearish FVG: Candle[i-2] Low > Candle[i] High
+        Detects unmitigated Fair Value Gaps (FVG) / Imbalances in recent M5 candles.
+        Bullish FVG: Candle[i-2] High < Candle[i] Low (Unmitigated: subsequent price hasn't filled down through gap floor)
+        Bearish FVG: Candle[i-2] Low > Candle[i] High (Unmitigated: subsequent price hasn't filled up through gap ceiling)
         """
         if not config.FAIR_VALUE_GAP_ENABLED or m5_df.empty or len(m5_df) < 5:
             return False, "NONE"
 
-        # Inspect last 10 candles for active imbalance
-        for i in range(len(m5_df) - 1, max(len(m5_df) - 10, 2), -1):
+        total_candles = len(m5_df)
+        # Inspect recent candles for fresh, unmitigated imbalances
+        for i in range(total_candles - 1, max(total_candles - 12, 1), -1):
             c_current = m5_df.iloc[i]
             c_two_back = m5_df.iloc[i - 2]
 
             # Bullish FVG
             if c_current["low"] > c_two_back["high"]:
-                gap_size = c_current["low"] - c_two_back["high"]
-                if gap_size > 0:
+                gap_floor = c_two_back["high"]
+                # Verify gap has not been mitigated by candles following candle i
+                is_mitigated = False
+                if i + 1 < total_candles:
+                    subsequent_bars = m5_df.iloc[i + 1:]
+                    if not subsequent_bars.empty and subsequent_bars["low"].min() <= gap_floor:
+                        is_mitigated = True
+
+                if not is_mitigated:
                     return True, "BULLISH_FVG"
 
             # Bearish FVG
             if c_two_back["low"] > c_current["high"]:
-                gap_size = c_two_back["low"] - c_current["high"]
-                if gap_size > 0:
+                gap_ceiling = c_two_back["low"]
+                # Verify gap has not been mitigated by candles following candle i
+                is_mitigated = False
+                if i + 1 < total_candles:
+                    subsequent_bars = m5_df.iloc[i + 1:]
+                    if not subsequent_bars.empty and subsequent_bars["high"].max() >= gap_ceiling:
+                        is_mitigated = True
+
+                if not is_mitigated:
                     return True, "BEARISH_FVG"
 
         return False, "NONE"

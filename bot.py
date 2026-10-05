@@ -287,8 +287,9 @@ class ExnessTradingBot:
                         time.sleep(3)
                         continue
 
-                    # 2. Check Friday Market Cutoff
+                    # 2. Check Friday Market Cutoff and Cancel Expired Limit Orders
                     self.order_manager.check_friday_auto_close(self.basket_symbols)
+                    self.order_manager.cancel_expired_pending_orders()
 
                     # 3. Check Heartbeat and Daily Digest
                     self.check_heartbeat()
@@ -298,6 +299,7 @@ class ExnessTradingBot:
                     for sym in self.basket_symbols:
                         self.order_manager.manage_trailing_and_breakeven(sym)
                     active_positions = self.order_manager.get_bot_positions()
+                    total_active_and_pending = self.order_manager.get_bot_active_and_pending_count()
 
                     # 5. Scan basket for top setup
                     top_candidate = self.scan_basket()
@@ -307,7 +309,7 @@ class ExnessTradingBot:
 
                     # 6. Execute trade if valid signal and risk checks pass
                     if sig in ["BUY", "SELL"]:
-                        can_trade, reason = self.risk_manager.can_open_trade(top_sym, len(active_positions))
+                        can_trade, reason = self.risk_manager.can_open_trade(top_sym, total_active_and_pending)
                         if can_trade:
                             atr_val = metrics.get("atr", 0.0)
                             atr_pct = metrics.get("atr_pct", 50.0)
@@ -341,8 +343,10 @@ class ExnessTradingBot:
             self.stop()
 
     def stop(self):
-        """Safely shuts down bot and closes connector."""
+        """Safely shuts down bot, flushes notifier, and closes connector."""
         self.running = False
+        if self.order_manager and self.order_manager.notifier:
+            self.order_manager.notifier.shutdown()
         self.connector.shutdown()
         console.print("[bold green]Exness Trading Bot stopped safely.[/bold green]")
 

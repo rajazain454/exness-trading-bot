@@ -21,7 +21,23 @@ class EconomicNewsFilter:
         self.cached_events: List[Dict[str, Any]] = []
         self.last_fetch_time: Optional[datetime] = None
         self.cache_duration = timedelta(hours=3)
+        self._is_fetching = False
         self.load_disk_cache()
+
+    def fetch_calendar_async(self):
+        """Spawns non-blocking background thread to refresh economic calendar without stalling trade execution."""
+        if getattr(self, "_is_fetching", False):
+            return
+        self._is_fetching = True
+        import threading
+        t = threading.Thread(target=self._fetch_calendar_worker, daemon=True, name="NewsFetchWorker")
+        t.start()
+
+    def _fetch_calendar_worker(self):
+        try:
+            self.fetch_calendar()
+        finally:
+            self._is_fetching = False
 
     def load_disk_cache(self):
         """Loads events from local disk cache if available."""
@@ -125,7 +141,10 @@ class EconomicNewsFilter:
         if not config.NEWS_FILTER_ENABLED:
             return False, "News filter disabled", None
 
-        self.fetch_calendar()
+        now_utc = datetime.now(timezone.utc)
+        if not self.last_fetch_time or (now_utc - self.last_fetch_time) >= self.cache_duration:
+            self.fetch_calendar_async()
+
         if not self.cached_events:
             return False, "No active news events loaded", None
 

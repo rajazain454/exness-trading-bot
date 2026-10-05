@@ -22,6 +22,120 @@ class OrderManager:
         self.notifier = DiscordNotifier()
         self.journal = TradeJournal()
         self.tracked_positions: Dict[int, Dict[str, Any]] = {}
+        # Hydrate existing positions across restarts
+        self.hydrate_active_positions()
+
+    def hydrate_active_positions(self):
+        """
+        Restores tracking state for all open MT5 bot positions on startup.
+        Ensures trailing stops, break-even locks, partial TP, and journal exit logging
+        work seamlessly across bot restarts.
+        """
+        positions = self.get_bot_positions()
+        if not positions:
+            return
+
+        for pos in positions:
+            ticket = pos.ticket
+            if ticket in self.tracked_positions:
+                continue
+
+            trade = self.journal.get_trade(ticket)
+            signal = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
+            entry_price = float(pos.price_open)
+            sl = float(pos.sl)
+            tp = float(pos.tp)
+            volume = float(pos.volume)
+
+            be_locked = False
+            partial_closed = False
+
+            if trade:
+                signal = trade.get("signal", signal)
+                orig_lot = trade.get("lot", volume)
+                entry_price = trade.get("entry_price", entry_price)
+                if volume < orig_lot:
+                    partial_closed = True
+
+            pip_size = self.connector.get_pip_size(pos.symbol)
+            if signal == "BUY" and sl >= (entry_price + (config.BREAKEVEN_OFFSET_PIPS * pip_size * 0.5)):
+                be_locked = True
+            elif signal == "SELL" and sl > 0 and sl <= (entry_price - (config.BREAKEVEN_OFFSET_PIPS * pip_size * 0.5)):
+                be_locked = True
+
+            self.tracked_positions[ticket] = {
+                "symbol": pos.symbol,
+                "signal": signal,
+                "entry": entry_price,
+                "lot": volume,
+                "sl": sl,
+                "tp": tp,
+                "be_locked": be_locked,
+                "partial_closed": partial_closed
+            }
+
+            if not trade:
+                self.journal.record_entry(
+                    ticket=ticket,
+                    symbol=pos.symbol,
+                    signal=signal,
+                    lot=volume,
+                    entry_price=entry_price,
+                    sl=sl,
+                    tp=tp,
+                    latency_ms=0.0,
+                    slippage_pips=0.0
+                )
+
+            logger.info(f"Hydrated active position #{ticket} ({pos.symbol}, {signal}, {volume} lot). BE: {be_locked}, Partial Closed: {partial_closed}")
+
+    def get_pending_orders(self, symbol: Optional[str] = None) -> List[Any]:
+        """Retrieves active pending orders opened by this bot."""
+        orders = mt5.orders_get(symbol=symbol) if symbol else mt5.orders_get()
+        if orders is None:
+            return []
+        return [o for o in orders if o.magic == config.MAGIC_NUMBER]
+
+    def get_bot_active_and_pending_count(self, symbol: Optional[str] = None) -> int:
+        """Counts both filled positions and unfilled pending orders."""
+        positions = self.get_bot_positions(symbol)
+        pending = self.get_pending_orders(symbol)
+        return len(positions) + len(pending)
+
+    def cancel_expired_pending_orders(self) -> int:
+        """
+        Cancels pending limit orders that have exceeded PENDING_ORDER_EXPIRY_MINS.
+        Prevents stale limit orders from sitting on the book indefinitely.
+        """
+        pending_orders = self.get_pending_orders()
+        if not pending_orders:
+            return 0
+
+        cancelled_count = 0
+        now_ts = datetime.now(timezone.utc).timestamp()
+        expiry_seconds = getattr(config, "PENDING_ORDER_EXPIRY_MINS", 15) * 60
+
+        for order in pending_orders:
+            order_time = getattr(order, "time_setup", 0)
+            if order_time <= 0:
+                continue
+            age_secs = now_ts - order_time
+            if age_secs >= expiry_seconds:
+                request = {
+                    "action": mt5.TRADE_ACTION_REMOVE,
+                    "order": order.ticket,
+                    "magic": config.MAGIC_NUMBER
+                }
+                result = mt5.order_send(request)
+                if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                    age_mins = age_secs / 60.0
+                    logger.info(f"Cancelled expired pending order #{order.ticket} on {order.symbol} (Age: {age_mins:.1f}m > {config.PENDING_ORDER_EXPIRY_MINS}m)")
+                    cancelled_count += 1
+                else:
+                    err = result.comment if result else mt5.last_error()
+                    logger.warning(f"Failed to cancel pending order #{order.ticket}: {err}")
+
+        return cancelled_count
 
     def get_filling_mode(self, symbol: str) -> int:
         """Determines the appropriate order filling mode for the symbol."""
@@ -233,12 +347,9 @@ class OrderManager:
                         close_vol = round(pos.volume * config.PARTIAL_CLOSE_RATIO, 2)
                         if self.close_partial_position(pos, close_vol):
                             pos_meta["partial_closed"] = True
-                            remaining_vol = round(pos.volume - close_vol, 2)
-                            if is_crypto:
-                                pnl_banked = round(current_profit_distance * close_vol, 2)
-                            else:
-                                pips_banked = current_profit_distance / pip_size
-                                pnl_banked = round(pips_banked * (close_vol / 0.01) * 0.10, 2)
+                            pips_banked = current_profit_distance / pip_size
+                            pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
+                            pnl_banked = round(pips_banked * pip_dollar_val, 2)
 
                             logger.info(f"[Partial-TP] Banked +${pnl_banked:.2f} on BUY #{ticket}. Remaining: {remaining_vol} lot.")
                             self.update_sl(pos, be_price)
@@ -271,11 +382,9 @@ class OrderManager:
                         if self.close_partial_position(pos, close_vol):
                             pos_meta["partial_closed"] = True
                             remaining_vol = round(pos.volume - close_vol, 2)
-                            if is_crypto:
-                                pnl_banked = round(current_profit_distance * close_vol, 2)
-                            else:
-                                pips_banked = current_profit_distance / pip_size
-                                pnl_banked = round(pips_banked * (close_vol / 0.01) * 0.10, 2)
+                            pips_banked = current_profit_distance / pip_size
+                            pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
+                            pnl_banked = round(pips_banked * pip_dollar_val, 2)
 
                             logger.info(f"[Partial-TP] Banked +${pnl_banked:.2f} on SELL #{ticket}. Remaining: {remaining_vol} lot.")
                             self.update_sl(pos, be_price)

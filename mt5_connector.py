@@ -120,6 +120,29 @@ class MT5Connector:
             return info.point * 10
         return info.point
 
+    def get_pip_dollar_value(self, symbol: str, lot: float = 0.01) -> float:
+        """
+        Calculates the real dollar value of 1 pip for the specified lot size.
+        Uses MT5 broker tick specifications (trade_tick_value, trade_tick_size)
+        to accurately support Forex majors, JPY crosses, Metals, and Crypto.
+        """
+        pip_size = self.get_pip_size(symbol)
+        info = mt5.symbol_info(symbol)
+        if not info:
+            return round((lot / 0.01) * 0.10, 4)
+
+        if info.trade_tick_size > 0 and info.trade_tick_value > 0:
+            tick_value_per_lot = info.trade_tick_value / info.trade_tick_size
+            pip_val = pip_size * tick_value_per_lot * lot
+            return round(pip_val, 4)
+
+        # Fallback for Crypto where 1 point = 1 USD on 1 contract
+        if any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"]):
+            contract_size = info.trade_contract_size if info.trade_contract_size > 0 else 1.0
+            return round(pip_size * contract_size * lot, 4)
+
+        return round((lot / 0.01) * 0.10, 4)
+
     def get_current_spread_pips(self, symbol: str) -> float:
         """Returns the current bid-ask spread in pips."""
         tick = self.get_symbol_tick(symbol)
