@@ -40,11 +40,15 @@ class ForexConfluenceStrategy:
         if df.empty or len(df) < self.ema_slow + 5:
             return df
 
-        df["time"] = pd.to_datetime(df["time"], unit="s")
+        if np.issubdtype(df["time"].dtype, np.number):
+            df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
+        else:
+            df["time"] = pd.to_datetime(df["time"], utc=True)
+
         high = df["high"]
         low = df["low"]
         close = df["close"]
-        vol = df["tick_volume"]
+        vol = df["tick_volume"] if "tick_volume" in df.columns else (df["volume"] if "volume" in df.columns else pd.Series(100.0, index=df.index))
 
         # EMAs
         df["ema_fast"] = close.ewm(span=self.ema_fast, adjust=False).mean()

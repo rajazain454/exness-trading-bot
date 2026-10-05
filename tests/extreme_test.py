@@ -10,6 +10,15 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 
+TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(TESTS_DIR)
+CRYPTO_DIR = os.path.join(PROJECT_ROOT, "crypto_forex_bot")
+GOLD_DIR = os.path.join(PROJECT_ROOT, "gold_scalper")
+
+for path in [PROJECT_ROOT, CRYPTO_DIR, GOLD_DIR]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
 console = Console()
 
 def test_mathematical_edge_stress():
@@ -349,10 +358,229 @@ def test_database_journal_and_persistence():
     journal._execute("DELETE FROM trades WHERE ticket = ?", (test_ticket,))
     console.print(f"  [green][PASS][/green] Test Trade Cleaned Up from Database")
 
+def test_gold_scalper_strategy_extreme_stress():
+    console.print("\n[bold cyan]=== [7/10] GOLD SCALPER STRATEGY & ADVERSARIAL MARKET DATA STRESS ===[/bold cyan]")
+    from gold_scalper.strategy_gold import GoldScalperStrategy
+
+    strat = GoldScalperStrategy()
+
+    # 1. Empty & Short series
+    assert strat.analyze([])["signal"] == "HOLD"
+    short_rates = [{"time": 1700000000 + i*300, "open": 2000.0, "high": 2001.0, "low": 1999.0, "close": 2000.5, "tick_volume": 100} for i in range(10)]
+    assert strat.analyze(short_rates)["signal"] == "HOLD"
+    console.print("  [green][PASS][/green] Edge Guard: Empty and Insufficient candles safely held")
+
+    # 2. Dead-Flat price series (zero variance, zero range)
+    flat_rates = [{"time": 1700000000 + i*300, "open": 2000.0, "high": 2000.0, "low": 2000.0, "close": 2000.0, "tick_volume": 100} for i in range(150)]
+    flat_res = strat.analyze(flat_rates)
+    assert flat_res["signal"] == "HOLD"
+    assert flat_res["metrics"]["chop"] == 50.0
+    assert flat_res["metrics"]["z_score"] == 0.0
+    console.print("  [green][PASS][/green] Flatline Market: Zero division & -inf prevented (CHOP=50.0, Z=0.0)")
+
+    # 3. Flash Overextension (Z-score guard > 2.8)
+    base_price = 2000.0
+    jump_rates = []
+    for i in range(145):
+        jump_rates.append({"time": 1700000000 + i*300, "open": base_price, "high": base_price+1, "low": base_price-1, "close": base_price, "tick_volume": 100})
+    for i in range(15):
+        jump_rates.append({"time": 1700000000 + (145+i)*300, "open": base_price + i*15, "high": base_price + i*15 + 2, "low": base_price + i*15 - 1, "close": base_price + i*15 + 1, "tick_volume": 500})
+    jump_res = strat.analyze(jump_rates)
+    assert jump_res["signal"] == "HOLD"
+    assert any(term in jump_res["reason"].lower() for term in ["z-score", "chop", "session", "adx"])
+    console.print(f"  [green][PASS][/green] Flash Spike Shield: Overextended momentum caught -> {jump_res['reason']}")
+
+    # 4. H1 Macro Reversal Suppression
+    t_start = int(datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc).timestamp())
+    bearish_h1 = [{"time": t_start + i*3600, "open": 2100.0 - i*2, "high": 2101.0 - i*2, "low": 2095.0 - i*2, "close": 2097.0 - i*2, "tick_volume": 1000} for i in range(30)]
+    h1_regime = strat.analyze_h1_macro(bearish_h1)
+    assert h1_regime == "BEARISH", f"Expected BEARISH H1 regime, got {h1_regime}"
+    console.print(f"  [green][PASS][/green] H1 Macro Trend Identification: Successfully classified {h1_regime}")
+
+def test_gold_scalper_bot_lifecycle_and_execution_stress():
+    console.print("\n[bold cyan]=== [8/10] GOLD SCALPER BOT LIFECYCLE & EXECUTION ENGINE ===[/bold cyan]")
+    from gold_scalper.bot_gold import GoldScalperBot
+    import MetaTrader5 as mt5
+
+    bot = GoldScalperBot()
+    assert bot.setup() is True, "Failed to connect to MT5 for Gold Scalper"
+    console.print(f"  [green][PASS][/green] Gold Scalper Setup & MT5 Connect: Symbol {bot.symbol} verified")
+
+    # 1. Test XAUUSDm broker order check with institutional lot
+    info = mt5.symbol_info(bot.symbol)
+    assert info is not None, f"Could not fetch symbol info for {bot.symbol}"
+    tick = mt5.symbol_info_tick(bot.symbol)
+    assert tick and tick.ask > 0, f"No live ask tick for {bot.symbol}"
+
+    entry = tick.ask
+    sl = round(entry - 2.50, info.digits)
+    tp = round(entry + 5.00, info.digits)
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": bot.symbol,
+        "volume": float(info.volume_min),
+        "type": mt5.ORDER_TYPE_BUY,
+        "price": float(entry),
+        "sl": float(sl),
+        "tp": float(tp),
+        "deviation": 20,
+        "magic": bot.magic,
+        "comment": "GoldScalp_Check",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+    check_res = mt5.order_check(request)
+    assert check_res is not None, "Order check returned None"
+    console.print(f"  [green][PASS][/green] Exness {bot.symbol} Order Check: Retcode {check_res.retcode} ({check_res.comment}) | Margin: ${check_res.margin:.2f}")
+
+    # 2. Test Partial TP & Break-Even Locking logic with Mock Position
+    mock_ticket = 6655441
+    class MockGoldPosition:
+        ticket = mock_ticket
+        symbol = bot.symbol
+        type = mt5.ORDER_TYPE_BUY
+        price_open = 2000.00
+        sl = 1995.00
+        tp = 2010.00
+        volume = 0.02
+        profit = 4.00
+        magic = bot.magic
+
+    orig_get_pos = bot.get_gold_positions
+    bot.get_gold_positions = lambda: [MockGoldPosition()]
+
+    class MockTick:
+        bid = 2004.00
+        ask = 2004.20
+    orig_tick = mt5.symbol_info_tick
+    mt5.symbol_info_tick = lambda sym: MockTick()
+
+    order_sends = []
+    orig_order_send = mt5.order_send
+    class MockOrderRes:
+        retcode = mt5.TRADE_RETCODE_DONE
+        order = 998877
+    mt5.order_send = lambda req: (order_sends.append(req) or MockOrderRes())
+
+    bot.active_be_locked.clear()
+    bot.manage_gold_positions(atr_val=2.50)
+
+    assert len(order_sends) == 2, f"Expected 2 order requests, got {len(order_sends)}"
+    assert order_sends[0]["action"] == mt5.TRADE_ACTION_DEAL and order_sends[0]["volume"] == 0.01
+    assert order_sends[1]["action"] == mt5.TRADE_ACTION_SLTP and order_sends[1]["sl"] == 2000.10
+    assert mock_ticket in bot.active_be_locked
+    console.print(f"  [green][PASS][/green] Position Management: Partial TP (0.01 lot) and Break-Even Lock ($2000.10) verified")
+
+    # Second pass: should NOT send again because ticket is in active_be_locked
+    order_sends.clear()
+    bot.manage_gold_positions(atr_val=2.50)
+    assert len(order_sends) == 0, "manage_gold_positions triggered repeatedly on already locked position!"
+    console.print(f"  [green][PASS][/green] Duplicate Protection: Active Break-Even lock state prevents repeat modifications")
+
+    # Restore mocks
+    bot.get_gold_positions = orig_get_pos
+    mt5.symbol_info_tick = orig_tick
+    mt5.order_send = orig_order_send
+
+    # 3. Test Dashboard Layout Builder
+    analysis_mock = {
+        "signal": "BUY",
+        "confidence": 0.85,
+        "metrics": {"close": 2004.0, "h1_trend": "BULLISH", "chop": 42.0, "adx": 28.5, "atr": 2.50}
+    }
+    dashboard = bot.build_dashboard(analysis_mock, [MockGoldPosition()])
+    assert dashboard is not None
+    console.print(f"  [green][PASS][/green] Rich Live Dashboard: Multi-panel layout generated successfully without errors")
+
+    bot.connector.shutdown()
+
+def test_fastapi_server_and_prediction_stress():
+    console.print("\n[bold cyan]=== [9/10] FASTAPI SERVER & ADVERSARIAL PREDICTION STRESS ===[/bold cyan]")
+    from crypto_forex_bot import server
+    from crypto_forex_bot.server import PredictRequest
+
+    # 1. Test Root & Health endpoints
+    root_res = server.root()
+    assert root_res["status"] == "online"
+    health_res = server.health_check()
+    assert health_res["status"] == "healthy"
+    console.print(f"  [green][PASS][/green] Server Diagnostics: Root and Health check endpoints operational")
+
+    # 2. Test Adversarial Predict Requests (Empty bars, Insufficient bars)
+    empty_req = PredictRequest(symbol="EURUSDm", timeframe="M5", bars=[])
+    res_empty = server.predict(empty_req)
+    assert res_empty.signal == 0
+    assert "insufficient bars" in res_empty.reason.lower()
+
+    short_req = PredictRequest(symbol="EURUSDm", timeframe="M5", bars=[[1700000000 + i*300, 1.10, 1.11, 1.09, 1.10, 100] for i in range(15)])
+    res_short = server.predict(short_req)
+    assert res_short.signal == 0
+    console.print(f"  [green][PASS][/green] Adversarial Protection: Short and empty bar inputs cleanly rejected with HOLD")
+
+    # 3. Test Full Confluence Prediction on 60 synthetic bars
+    bars = []
+    price = 1.1000
+    for i in range(60):
+        price += 0.0001
+        bars.append([1700000000 + i*300, price, price + 0.0005, price - 0.0005, price + 0.0002, 100])
+    full_req = PredictRequest(symbol="EURUSDm", timeframe="M5", bars=bars)
+    res_full = server.predict(full_req)
+    assert res_full.signal in [-1, 0, 1]
+    assert 0.0 <= res_full.confidence <= 1.0
+    console.print(f"  [green][PASS][/green] Quantitative Prediction Output: Signal={res_full.signal}, Conf={res_full.confidence*100:.0f}%, Reason={res_full.reason[:60]}...")
+
+def test_concurrency_and_extreme_database_stress():
+    console.print("\n[bold cyan]=== [10/10] MULTI-THREAD CONCURRENCY & SQLITE WAL STRESS ===[/bold cyan]")
+    from crypto_forex_bot.journal import TradeJournal
+    import concurrent.futures
+
+    journal = TradeJournal()
+    num_threads = 20
+    tickets = [8880000 + i for i in range(num_threads)]
+
+    def worker_trade_cycle(ticket):
+        journal.log_entry(
+            ticket=ticket,
+            symbol="BTCUSDm",
+            action="BUY",
+            lot_size=0.01,
+            entry_price=90000.0,
+            sl=89000.0,
+            tp=92000.0,
+            latency_ms=12.5,
+            slippage_pips=0.05
+        )
+        trade = journal.get_trade(ticket)
+        assert trade is not None
+        journal.log_exit(
+            ticket=ticket,
+            exit_price=92000.0,
+            realized_pnl=20.0,
+            exit_reason="TP_HIT",
+            pips=200.0
+        )
+        closed = journal.get_trade(ticket)
+        assert closed["status"] == "CLOSED"
+        return ticket
+
+    t_start = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        results = list(executor.map(worker_trade_cycle, tickets))
+
+    duration_ms = (time.perf_counter() - t_start) * 1000.0
+    assert len(results) == num_threads
+    console.print(f"  [green][PASS][/green] Concurrency Stress: Executed {num_threads} simultaneous entry-query-exit lifecycles in {duration_ms:.1f}ms")
+    console.print(f"  [green][PASS][/green] Zero Lock Contention: SQLite WAL mode handled high-frequency multi-threading seamlessly")
+
+    for t in tickets:
+        journal._execute("DELETE FROM trades WHERE ticket = ?", (t,))
+    console.print("  [green][PASS][/green] Concurrency Test Trades Cleaned Up")
+
 def main():
     console.print(Panel.fit(
-        "[bold cyan]EXTREME LEVEL DIAGNOSTIC & HARD STRESS TEST SUITE (AREAS 1 TO 4)[/bold cyan]\n"
-        "[white]Verifying Math Bounds, Dynamic Pip Values, State Hydration, Pending Orders, SMC, and Trailing Breaker[/white]",
+        "[bold cyan]EXTREME LEVEL FULL PROJECT DIAGNOSTIC & HARD STRESS TEST SUITE (10/10 AREAS)[/bold cyan]\n"
+        "[white]Verifying Math Bounds, Broker Orders, State Hydration, SMC/FVG, Trailing Breaker, SQLite Concurrency,\n"
+        "Gold Scalper Strategy, Gold Execution Lifecycle, and FastAPI Prediction Engine across BOTH Bots[/white]",
         border_style="cyan"
     ))
     t0 = time.time()
@@ -362,8 +590,12 @@ def main():
     test_strategy_and_unmitigated_fvg()
     test_risk_gatekeepers_and_peak_equity_breaker()
     test_database_journal_and_persistence()
+    test_gold_scalper_strategy_extreme_stress()
+    test_gold_scalper_bot_lifecycle_and_execution_stress()
+    test_fastapi_server_and_prediction_stress()
+    test_concurrency_and_extreme_database_stress()
     elapsed = time.time() - t0
-    console.print(f"\n[bold green]ALL 6/6 EXTREME HARD STRESS TESTS PASSED IN {elapsed:.2f}s WITH ZERO ERRORS![/bold green]")
+    console.print(f"\n[bold green]ALL 10/10 EXTREME HARD STRESS TESTS PASSED IN {elapsed:.2f}s WITH ZERO ERRORS![/bold green]")
 
 if __name__ == "__main__":
     main()

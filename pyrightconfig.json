@@ -1,0 +1,13 @@
+{
+  "include": [
+    "crypto_forex_bot",
+    "gold_scalper",
+    "tests"
+  ],
+  "extraPaths": [
+    ".",
+    "crypto_forex_bot",
+    "gold_scalper"
+  ],
+  "typeCheckingMode": "basic"
+}

@@ -66,8 +66,10 @@ class QuantitativeEngine:
         low_min = low.rolling(period).min()
         price_range = (high_max - low_min) + 1e-9
 
-        chop = 100.0 * np.log10(atr_sum / price_range) / np.log10(period)
-        return chop
+        safe_ratio = np.where(atr_sum > 1e-9, atr_sum / price_range, float(period) ** 0.5)
+        safe_ratio = np.maximum(safe_ratio, 1e-9)
+        chop = 100.0 * np.log10(safe_ratio) / np.log10(period)
+        return pd.Series(chop, index=high.index).fillna(50.0)
 
     @staticmethod
     def calculate_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, datetimes: pd.Series = None) -> pd.Series:

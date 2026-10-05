@@ -6,6 +6,8 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger("TradeJournal")
 
+DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trading_journal.db")
+
 class TradeJournal:
     """
     Persistent SQLite Trade Journal.
@@ -13,13 +15,13 @@ class TradeJournal:
     slippage, latency (ms), and calculates daily/weekly performance analytics.
     """
 
-    def __init__(self, db_path: str = "trading_journal.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or DEFAULT_DB_PATH
         self._init_db()
 
     def _execute(self, query: str, params: tuple = (), fetch: bool = False, fetchall: bool = True):
         """Executes a query with strict resource disposal and connection closing."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
         try:
             cursor = conn.cursor()
             cursor.execute(query, params)
@@ -34,6 +36,10 @@ class TradeJournal:
 
     def _init_db(self):
         """Creates the trades table if it doesn't exist and migrates missing columns."""
+        try:
+            self._execute("PRAGMA journal_mode=WAL;")
+        except Exception:
+            pass
         query = """
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
