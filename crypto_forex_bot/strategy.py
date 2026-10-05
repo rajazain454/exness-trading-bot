@@ -40,7 +40,7 @@ class ForexConfluenceStrategy:
         if df.empty or len(df) < self.ema_slow + 5:
             return df
 
-        if np.issubdtype(df["time"].dtype, np.number):
+        if pd.api.types.is_numeric_dtype(df["time"]):
             df["time"] = pd.to_datetime(df["time"], unit="s", utc=True)
         else:
             df["time"] = pd.to_datetime(df["time"], utc=True)
@@ -275,6 +275,19 @@ class ForexConfluenceStrategy:
                 if is_vwap_discount: score += 5    # VWAP institutional discount
                 if fvg_type == "BULLISH_FVG": score += 5
 
+                # Asset-Class Specific Momentum & Strength Normalization
+                is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+                if is_crypto:
+                    # Crypto-native institutional volume acceleration & volatility expansion
+                    if vol_ratio >= 1.5: score += 5
+                    if candle_range >= (atr_val * 1.0): score += 5
+                else:
+                    # Forex Currency Strength Meter differential boost
+                    if csm_engine and config.CSM_FILTER_ENABLED:
+                        diff, _, _ = csm_engine.get_currency_differential(symbol)
+                        if diff >= config.MIN_CSM_DIFFERENTIAL: score += 5
+                        if diff >= (config.MIN_CSM_DIFFERENTIAL * 2.0): score += 5
+
                 return {
                     "signal": "BUY",
                     "reason": f"Quant Confluence: H1={h1_trend}, M5 Bullish, CHOP={chop_val:.1f}, Z={z_score_val:.2f}, VWAP discount verified.",
@@ -325,6 +338,19 @@ class ForexConfluenceStrategy:
                 if z_score_val >= 0.5: score += 5
                 if is_vwap_premium: score += 5
                 if fvg_type == "BEARISH_FVG": score += 5
+
+                # Asset-Class Specific Momentum & Strength Normalization
+                is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+                if is_crypto:
+                    # Crypto-native institutional volume acceleration & volatility expansion
+                    if vol_ratio >= 1.5: score += 5
+                    if candle_range >= (atr_val * 1.0): score += 5
+                else:
+                    # Forex Currency Strength Meter differential boost
+                    if csm_engine and config.CSM_FILTER_ENABLED:
+                        diff, _, _ = csm_engine.get_currency_differential(symbol)
+                        if diff <= -config.MIN_CSM_DIFFERENTIAL: score += 5
+                        if diff <= -(config.MIN_CSM_DIFFERENTIAL * 2.0): score += 5
 
                 return {
                     "signal": "SELL",

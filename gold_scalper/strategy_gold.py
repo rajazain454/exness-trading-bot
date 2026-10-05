@@ -89,26 +89,39 @@ class GoldScalperStrategy:
         std_50 = close.rolling(50).std()
         df["z_score"] = (close - mean_50) / (std_50 + 1e-9)
 
-        # Intraday VWAP (anchored daily)
+        # Institutional Volume Moving Average (20-period)
+        vol_period = getattr(config_gold, "VOLUME_MA_PERIOD", 20)
+        df["vol_sma"] = vol.rolling(window=vol_period).mean().fillna(vol)
+        df["vol_ratio"] = vol / (df["vol_sma"] + 1e-9)
+
+        # Intraday VWAP (Anchored to London Open 08:00 UTC)
         typical_price = (high + low + close) / 3.0
         pv = typical_price * vol
-        dates = df["time_dt"].dt.date
-        df["vwap"] = pv.groupby(dates).cumsum() / (vol.groupby(dates).cumsum() + 1e-9)
+        session_dates = (df["time_dt"] - pd.Timedelta(hours=8)).dt.date
+        df["vwap"] = pv.groupby(session_dates).cumsum() / (vol.groupby(session_dates).cumsum() + 1e-9)
 
         return df
 
     def analyze_h1_macro(self, h1_rates: Optional[Any] = None) -> str:
-        """Determines macro trend regime on Gold H1 candles."""
-        if h1_rates is None or len(h1_rates) < 21:
+        """Determines macro trend regime on Gold H1 candles using institutional EMA 50 & 200."""
+        if h1_rates is None or len(h1_rates) < 20:
             return "NEUTRAL"
         df_h1 = pd.DataFrame(h1_rates)
         close = df_h1["close"]
-        ema9 = close.ewm(span=9, adjust=False).mean().iloc[-1]
-        ema21 = close.ewm(span=21, adjust=False).mean().iloc[-1]
+        h1_fast = getattr(config_gold, "H1_EMA_FAST", 50)
+        h1_slow = getattr(config_gold, "H1_EMA_SLOW", 200)
+
+        # Fallback spans if fewer candles are returned by broker
+        fast_span = h1_fast if len(close) >= h1_fast else min(len(close), 20)
+        slow_span = h1_slow if len(close) >= h1_slow else len(close)
+
+        ema_fast = close.ewm(span=fast_span, adjust=False).mean().iloc[-1]
+        ema_slow = close.ewm(span=slow_span, adjust=False).mean().iloc[-1]
         c = close.iloc[-1]
-        if ema9 > ema21 and c > ema21:
+
+        if ema_fast > ema_slow and c > ema_fast:
             return "BULLISH"
-        elif ema9 < ema21 and c < ema21:
+        elif ema_fast < ema_slow and c < ema_fast:
             return "BEARISH"
         return "NEUTRAL"
 
@@ -116,6 +129,7 @@ class GoldScalperStrategy:
         """
         Analyzes the latest M1 micro-candles to confirm reversal execution timing.
         Ensures the bot does not sell into an active green candle surge or buy into a falling knife.
+        Requires genuine body momentum or rejection wick — tiny dojis are rejected.
         """
         if m1_rates is None or len(m1_rates) < 2:
             return {"bullish_confirmed": True, "bearish_confirmed": True, "reason": "M1 data omitted (default pass)"}
@@ -129,21 +143,23 @@ class GoldScalperStrategy:
         l = curr["low"]
         rng = h - l + 1e-9
 
+        body = abs(c - o)
         lower_wick = (min(o, c) - l) / rng
         upper_wick = (h - max(o, c)) / rng
+        body_ratio = body / rng
 
         # Bullish M1 Reversal Confirmation:
-        # Candle is green (close > open) OR has significant lower wick absorption (>= 25%)
-        bullish = bool((c > o) or (lower_wick >= 0.25))
+        # Candle is green with meaningful body (>=30%) OR significant lower wick absorption (>= 20%)
+        bullish = bool((c > o) and ((body_ratio >= 0.30) or (lower_wick >= 0.20)))
 
         # Bearish M1 Reversal Confirmation:
-        # Candle is red (close < open) OR has significant upper wick rejection (>= 25%)
-        bearish = bool((c < o) or (upper_wick >= 0.25))
+        # Candle is red with meaningful body (>=30%) OR significant upper wick rejection (>= 20%)
+        bearish = bool((c < o) and ((body_ratio >= 0.30) or (upper_wick >= 0.20)))
 
         return {
             "bullish_confirmed": bullish,
             "bearish_confirmed": bearish,
-            "reason": f"M1: Bull={bullish} (c={c:.2f}, o={o:.2f}, low_wick={lower_wick*100:.0f}%), Bear={bearish} (upper_wick={upper_wick*100:.0f}%)"
+            "reason": f"M1: Bull={bullish} (c={c:.2f}, o={o:.2f}, body={body_ratio*100:.0f}%, low_wick={lower_wick*100:.0f}%), Bear={bearish} (upper_wick={upper_wick*100:.0f}%)"
         }
 
     def analyze(self, m5_rates: List[Dict[str, Any]], h1_rates: Optional[List[Dict[str, Any]]] = None, m1_rates: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
@@ -176,6 +192,7 @@ class GoldScalperStrategy:
         chop_val = curr["chop"] if not np.isnan(curr["chop"]) else 50.0
         z_score = curr["z_score"] if not np.isnan(curr["z_score"]) else 0.0
         vwap_val = curr["vwap"] if not np.isnan(curr["vwap"]) else close
+        vol_ratio = curr["vol_ratio"] if "vol_ratio" in curr and not np.isnan(curr["vol_ratio"]) else 1.0
 
         # Rejection wicks
         c_range = high - low
@@ -189,6 +206,7 @@ class GoldScalperStrategy:
             upper_wick_ratio = 0.0
 
         h1_trend = self.analyze_h1_macro(h1_rates)
+        min_wick = getattr(config_gold, "MIN_WICK_PERCENT", 25.0) / 100.0
 
         metrics = {
             "symbol": "XAUUSDm",
@@ -202,6 +220,7 @@ class GoldScalperStrategy:
             "chop": round(chop_val, 1),
             "z_score": round(z_score, 2),
             "vwap": round(vwap_val, 3),
+            "vol_ratio": round(vol_ratio, 2),
             "lower_wick_pct": round(lower_wick_ratio * 100, 1),
             "upper_wick_pct": round(upper_wick_ratio * 100, 1),
             "h1_trend": h1_trend,
@@ -209,7 +228,7 @@ class GoldScalperStrategy:
         }
 
         # -------------------------------------------------------------
-        # 1. SESSION FILTER: Gold should trade during active hours (07:00 - 18:00 UTC)
+        # 1. SESSION FILTER: Gold should trade during active hours (08:00 - 16:00 UTC)
         # -------------------------------------------------------------
         if config_gold.AVOID_ASIAN_SESSION:
             hour = now_utc.hour
@@ -255,15 +274,15 @@ class GoldScalperStrategy:
             }
 
         # -------------------------------------------------------------
-        # BUY SCALP CONFLUENCE EVALUATION
+        # BUY SCALP CONFLUENCE EVALUATION (Aligned with Institutional EA)
         # -------------------------------------------------------------
         m5_bullish = (ema_f > ema_s) and (close >= ema_t * 0.9995)
-        # Pullback into value: price touched or approached EMA slow, now bouncing
+        # Pullback into value: price touched or approached EMA fast/slow
         pullback_touched_value = (low <= ema_f * 1.0005) or (low <= ema_s * 1.0008)
-        rsi_rebound = (rsi_val >= 48.0) and (rsi_val > prev["rsi"])
-        buyer_absorption_wick = (lower_wick_ratio >= 0.20) or (close >= open_price)
+        buyer_absorption_wick = (lower_wick_ratio >= min_wick) or (close >= open_price)
+        volume_confirmed = vol_ratio >= getattr(config_gold, "VOLUME_THRESHOLD_MULT", 1.10)
 
-        if m5_bullish and pullback_touched_value and rsi_rebound and buyer_absorption_wick:
+        if m5_bullish and pullback_touched_value and buyer_absorption_wick:
             if h1_trend == "BEARISH":
                 return {
                     "signal": "HOLD",
@@ -285,26 +304,26 @@ class GoldScalperStrategy:
             # Score confluence
             score = 70
             if h1_trend == "BULLISH": score += 10
-            if chop_val <= 45.0: score += 10
-            if lower_wick_ratio >= 0.25: score += 5
+            if volume_confirmed: score += 10
+            if chop_val <= 45.0: score += 5
+            if lower_wick_ratio >= min_wick: score += 5
             if close <= (vwap_val * 1.0008): score += 5  # Buying near/below institutional VWAP
 
             return {
                 "signal": "BUY",
                 "confidence": round(min(score, 100) / 100.0, 4),
-                "reason": f"Gold Scalp BUY: H1={h1_trend}, M5 Bullish, EMA 9/21 pullback bounced, M1 Confirmed, CHOP={chop_val:.1f}.",
+                "reason": f"Gold Scalp BUY: H1={h1_trend}, M5 Bullish, EMA 9/21 pullback bounced, Vol={vol_ratio:.1f}x, M1 Confirmed, CHOP={chop_val:.1f}.",
                 "metrics": metrics
             }
 
         # -------------------------------------------------------------
-        # SELL SCALP CONFLUENCE EVALUATION
+        # SELL SCALP CONFLUENCE EVALUATION (Aligned with Institutional EA)
         # -------------------------------------------------------------
         m5_bearish = (ema_f < ema_s) and (close <= ema_t * 1.0005)
         pullback_rally_value = (high >= ema_f * 0.9995) or (high >= ema_s * 0.9992)
-        rsi_drop = (rsi_val <= 52.0) and (rsi_val < prev["rsi"])
-        seller_absorption_wick = (upper_wick_ratio >= 0.20) or (close <= open_price)
+        seller_absorption_wick = (upper_wick_ratio >= min_wick) or (close <= open_price)
 
-        if m5_bearish and pullback_rally_value and rsi_drop and seller_absorption_wick:
+        if m5_bearish and pullback_rally_value and seller_absorption_wick:
             if h1_trend == "BULLISH":
                 return {
                     "signal": "HOLD",
@@ -325,20 +344,21 @@ class GoldScalperStrategy:
 
             score = 70
             if h1_trend == "BEARISH": score += 10
-            if chop_val <= 45.0: score += 10
-            if upper_wick_ratio >= 0.25: score += 5
+            if volume_confirmed: score += 10
+            if chop_val <= 45.0: score += 5
+            if upper_wick_ratio >= min_wick: score += 5
             if close >= (vwap_val * 0.9992): score += 5  # Selling near/above institutional VWAP
 
             return {
                 "signal": "SELL",
                 "confidence": round(min(score, 100) / 100.0, 4),
-                "reason": f"Gold Scalp SELL: H1={h1_trend}, M5 Bearish, EMA 9/21 rally rejected, M1 Confirmed, CHOP={chop_val:.1f}.",
+                "reason": f"Gold Scalp SELL: H1={h1_trend}, M5 Bearish, EMA 9/21 rally rejected, Vol={vol_ratio:.1f}x, M1 Confirmed, CHOP={chop_val:.1f}.",
                 "metrics": metrics
             }
 
         return {
             "signal": "HOLD",
             "confidence": 0.0,
-            "reason": f"Gold scanning. M5={'BULLISH' if m5_bullish else ('BEARISH' if m5_bearish else 'NEUTRAL')} | H1={h1_trend} | CHOP={chop_val:.1f} | Waiting for dynamic EMA 9/21 pullback.",
+            "reason": f"Gold scanning. M5={'BULLISH' if m5_bullish else ('BEARISH' if m5_bearish else 'NEUTRAL')} | H1={h1_trend} | Vol={vol_ratio:.1f}x | CHOP={chop_val:.1f}.",
             "metrics": metrics
         }

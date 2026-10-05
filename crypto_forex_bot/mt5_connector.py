@@ -153,9 +153,16 @@ class MT5Connector:
         return round(spread, 2)
 
     def get_rates(self, symbol: str, timeframe_str: str, count: int = 150):
-        """Fetches historical candles."""
+        """Fetches historical candles with automatic terminal health check & recovery."""
         tf = self.TIMEFRAMES.get(timeframe_str.upper(), mt5.TIMEFRAME_M5)
-        return mt5.copy_rates_from_pos(symbol, tf, 0, count)
+        rates = mt5.copy_rates_from_pos(symbol, tf, 0, count)
+        if rates is None or len(rates) == 0:
+            term = mt5.terminal_info()
+            if term is None or not term.connected:
+                logger.warning(f"Terminal connection dropped during get_rates for {symbol}. Triggering auto-recovery...")
+                if self.ensure_connection():
+                    rates = mt5.copy_rates_from_pos(symbol, tf, 0, count)
+        return rates
 
     def get_account_summary(self) -> Dict[str, Any]:
         """Refreshes and returns current account balance, equity, and margin."""

@@ -1,3 +1,6 @@
+import os
+import json
+import math
 import logging
 from datetime import datetime, timezone, date, time, timedelta
 from typing import Tuple, Dict, Any, Optional, List
@@ -156,16 +159,25 @@ class RiskManager:
         f* = (p * b - (1 - p)) / b
         """
         if config.USE_KELLY_SIZING:
-            stats = self.journal.get_all_time_stats()
-            win_rate = stats.get("win_rate", 60.0)
+            is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"]) if symbol else False
+            asset_type = "CRYPTO" if is_crypto else "FOREX"
+            stats = self.journal.get_all_time_stats(asset_type=asset_type)
+
             if stats.get("total", 0) < 5:
-                win_rate = 60.0
+                # Conservative defaults based on 1-year quant testing
+                win_rate = 45.0 if is_crypto else 60.0
+                avg_win = 4.50 if is_crypto else 2.50
+                avg_loss = 1.50
+            else:
+                win_rate = stats.get("win_rate", 60.0)
+                avg_win = stats.get("avg_win_usd", 2.50)
+                avg_loss = stats.get("avg_loss_usd", 1.50)
 
             # Quarter-Kelly risk percentage
             safe_risk_fraction = QuantitativeEngine.calculate_kelly_fraction(
                 win_rate=win_rate,
-                avg_win_usd=2.50,
-                avg_loss_usd=1.50,
+                avg_win_usd=avg_win,
+                avg_loss_usd=avg_loss,
                 fraction=config.KELLY_FRACTION
             )
             # Dollar risk budget
@@ -177,15 +189,29 @@ class RiskManager:
                 dollar_risk_001 = max(0.10, sl_pips * pip_val_001)
                 calculated_units = risk_budget_usd / dollar_risk_001
             else:
-                calculated_units = risk_budget_usd / 1.50
+                calculated_units = risk_budget_usd / (avg_loss if avg_loss > 0 else 1.50)
 
             lot = round(max(config.BASE_LOT_SIZE, calculated_units * 0.01), 2)
-            return min(lot, config.MAX_LOT_SIZE)
+        else:
+            # Fallback compounding
+            multiplier = int(equity // config.CAPITAL_PER_001_LOT)
+            lot = round(max(config.BASE_LOT_SIZE, multiplier * config.BASE_LOT_SIZE), 2)
 
-        # Fallback compounding
-        multiplier = int(equity // config.CAPITAL_PER_001_LOT)
-        calculated_lot = round(max(config.BASE_LOT_SIZE, multiplier * config.BASE_LOT_SIZE), 2)
-        return min(calculated_lot, config.MAX_LOT_SIZE)
+        # Broker symbol compliance: volume_min, volume_max, volume_step
+        s_info = mt5.symbol_info(symbol) if symbol else None
+        if s_info:
+            vol_min = s_info.volume_min if s_info.volume_min > 0 else config.BASE_LOT_SIZE
+            vol_max = s_info.volume_max if s_info.volume_max > 0 else config.MAX_LOT_SIZE
+            vol_step = s_info.volume_step if s_info.volume_step > 0 else 0.01
+
+            steps = max(0, round((lot - vol_min) / vol_step))
+            lot = max(vol_min, min(vol_max, vol_min + steps * vol_step))
+            step_decimals = max(0, -int(math.log10(vol_step))) if vol_step < 1 else 0
+            lot = round(min(lot, config.MAX_LOT_SIZE), step_decimals)
+        else:
+            lot = min(lot, config.MAX_LOT_SIZE)
+
+        return lot
 
     # Backward compatibility alias
     calculate_compounding_lot = calculate_lot_size
@@ -199,6 +225,11 @@ class RiskManager:
 
         if active_positions_count >= config.MAX_OPEN_POSITIONS:
             return False, f"Maximum open position limit ({config.MAX_OPEN_POSITIONS}) reached."
+
+        # Verify broker allows trading on this specific symbol
+        s_info = mt5.symbol_info(symbol) if symbol else None
+        if s_info and s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_DISABLED:
+            return False, f"Trading is disabled for {symbol} on this broker account."
 
         anomaly_ok, anomaly_reason = self.check_spread_anomaly(symbol)
         if not anomaly_ok:
@@ -260,7 +291,9 @@ class RiskManager:
         lot_size = self.calculate_lot_size(acc["equity"], symbol=symbol)
         required_margin = mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, symbol, lot_size, tick.ask)
         if required_margin is None:
-            required_margin = (100000.0 * lot_size * tick.ask) / acc.get("leverage", 50)
+            s_info = mt5.symbol_info(symbol)
+            contract_size = s_info.trade_contract_size if s_info and s_info.trade_contract_size > 0 else 100000.0
+            required_margin = (contract_size * lot_size * tick.ask) / acc.get("leverage", 50)
 
         if acc["free_margin"] < (required_margin + 2.0):
             return False, f"Insufficient Free Margin (${acc['free_margin']:.2f}). Need ~${required_margin:.2f}."
@@ -346,8 +379,28 @@ class RiskManager:
         sl_usd = sl_pips * pip_dollar_value
         tp_usd = tp_pips * pip_dollar_value
 
-        stats = self.journal.get_all_time_stats()
-        win_prob = (stats.get("win_rate", 60.0) / 100.0) if stats.get("total", 0) >= 5 else 0.60
+        asset_type = "CRYPTO" if is_crypto else "FOREX"
+        stats = self.journal.get_all_time_stats(asset_type=asset_type)
+        if stats.get("total", 0) >= 5:
+            win_prob = stats.get("win_rate", 60.0) / 100.0
+        else:
+            # Check trained model performance win rate first
+            trained_model_file = os.path.join(os.path.dirname(__file__), "trained_models.json")
+            trained_wr = None
+            if os.path.exists(trained_model_file):
+                try:
+                    with open(trained_model_file, "r") as f:
+                        trained_data = json.load(f)
+                        perf = trained_data.get(symbol, {}).get("one_year_performance", {})
+                        if perf.get("win_rate", 0) > 0:
+                            trained_wr = perf["win_rate"] / 100.0
+                except Exception:
+                    pass
+            if trained_wr is not None:
+                win_prob = trained_wr
+            else:
+                win_prob = 0.55 if is_crypto else 0.60
+
         ev_usd, ev_ratio = QuantitativeEngine.calculate_expected_value(win_prob, tp_usd, sl_usd)
 
         if config.EXPECTED_VALUE_FILTER_ENABLED and ev_ratio < config.MIN_EV_RATIO:
@@ -363,5 +416,6 @@ class RiskManager:
             "lot": lot,
             "ev_usd": ev_usd,
             "ev_ratio": ev_ratio,
-            "atr_pct": atr_percentile
+            "atr_pct": atr_percentile,
+            "atr": atr_value
         }

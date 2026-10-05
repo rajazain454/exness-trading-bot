@@ -57,9 +57,22 @@ exness/
 
 ## 🎯 Which Files Do You Need to Touch?
 
-### 1. In MetaTrader 5:
-* Attach **[mt5_eas/Octa_Hybrid_Demo_EA.mq5](file:///f:/Random/WORK/exness/mt5_eas/Octa_Hybrid_Demo_EA.mq5)** to `BTCUSDm, M5`.
-* Attach **[mt5_eas/Gold_Institutional_Scalper_EA.mq5](file:///f:/Random/WORK/exness/mt5_eas/Gold_Institutional_Scalper_EA.mq5)** to `XAUUSDm, M5`.
+### 🪙 Suite 1: Crypto & Forex Bot
+1. **Server (AI Brain)**: Double-click **[start_crypto_server.bat](file:///f:/Random/WORK/exness/start_crypto_server.bat)** to keep the FastAPI engine running on port 8000.
+2. **Execution**:
+   - In MT5, attach **[mt5_eas/Octa_Hybrid_Demo_EA.mq5](file:///f:/Random/WORK/exness/mt5_eas/Octa_Hybrid_Demo_EA.mq5)** to `BTCUSDm, M5` (communicates with FastAPI server).
+   - *OR* run the standalone Python swing engine via `crypto_forex_bot\start_bot_background.bat`.
 
-### 2. On Your PC (Root Folder):
-* Double-click **[start_crypto_server.bat](file:///f:/Random/WORK/exness/start_crypto_server.bat)** to keep the AI prediction engine running for the Crypto EA.
+---
+
+### 🥇 Suite 2: Gold (XAUUSDm) Scalper (CHOOSE ONE OPTION ONLY)
+> ⚠️ **DO NOT RUN BOTH AT THE SAME TIME** — They share symbol `XAUUSDm` and magic number `777001`.
+
+* **Option A (⭐️ STRONGLY RECOMMENDED — Full 6-Quant Edge)**:
+  - Double-click **[gold_scalper/start_gold_scalper.bat](file:///f:/Random/WORK/exness/gold_scalper/start_gold_scalper.bat)**.
+  - Runs the full Python engine with CHOP, Z-score, ADX, VWAP, H1 macro trend, M1 micro-timing, and economic news blackout filter.
+  - **Do NOT attach the Gold EA in MT5.**
+
+* **Option B (Lightweight MT5 Fallback Only)**:
+  - If you do not wish to run Python, attach **[mt5_eas/Gold_Institutional_Scalper_EA.mq5](file:///f:/Random/WORK/exness/mt5_eas/Gold_Institutional_Scalper_EA.mq5)** to `XAUUSDm, M5`.
+  - Ensure the Python Gold Scalper terminal is closed.

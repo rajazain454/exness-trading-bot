@@ -31,16 +31,35 @@ for d in [PARENT_DIR, CRYPTO_DIR, GOLD_DIR]:
     if d not in sys.path:
         sys.path.insert(0, d)
 
+import logging
+from logging.handlers import RotatingFileHandler
+
 try:
     from gold_scalper import config_gold
     from gold_scalper.strategy_gold import GoldScalperStrategy
+    from gold_scalper.order_manager_gold import GoldOrderManager
 except ImportError:
     import config_gold
     from strategy_gold import GoldScalperStrategy
+    from order_manager_gold import GoldOrderManager
 
 from crypto_forex_bot.mt5_connector import MT5Connector
 from crypto_forex_bot.notifier import DiscordNotifier
 from crypto_forex_bot.journal import TradeJournal
+
+# Setup Rotating File Logger for permanent audit trail
+os.makedirs("logs", exist_ok=True)
+file_logger = logging.getLogger("GoldScalperFile")
+file_logger.setLevel(logging.INFO)
+if not file_logger.handlers:
+    rfh = RotatingFileHandler(
+        "logs/gold_scalper.log",
+        maxBytes=5 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8"
+    )
+    rfh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    file_logger.addHandler(rfh)
 
 console = Console()
 
@@ -53,22 +72,58 @@ class GoldScalperBot:
         self.strategy = GoldScalperStrategy()
         self.notifier = DiscordNotifier(config_gold.DISCORD_WEBHOOK_URL)
         self.journal = TradeJournal()
-        self.running = False
-        self.logs = []
         self.symbol = config_gold.SYMBOL
         self.magic = config_gold.MAGIC_NUMBER
-        self.active_be_locked = set()
-        self.known_positions = {}
-        self.trailing_sl = {}
-        self.last_trail_price = {}
-        self.last_exit_m5_bar_time = 0
+        self.order_manager = GoldOrderManager(
+            connector=self.connector,
+            notifier=self.notifier,
+            journal=self.journal,
+        )
+        self.running = False
+        self.logs = []
+        self.circuit_breaker_active = False
+        self.circuit_breaker_until_bar = 0
+
+        # Initialize Economic News Filter
+        self.news_filter = None
+        if getattr(config_gold, "NEWS_FILTER_ENABLED", True):
+            try:
+                from crypto_forex_bot.news_filter import EconomicNewsFilter
+                pre_b = getattr(config_gold, "NEWS_PRE_BUFFER_MINS", 30)
+                post_b = getattr(config_gold, "NEWS_POST_BUFFER_MINS", 30)
+                self.news_filter = EconomicNewsFilter(pre_buffer_mins=pre_b, post_buffer_mins=post_b)
+                self.news_filter.fetch_calendar_async()
+            except Exception as e:
+                self.log(f"News filter initialization error: {e}", "WARN")
+
+    @property
+    def known_positions(self):
+        return self.order_manager.tracked_positions
+
+    @property
+    def active_be_locked(self):
+        return self.order_manager.active_be_locked
+
+    @property
+    def last_exit_m5_bar_time(self):
+        return self.order_manager.last_exit_m5_bar_time
+
+    @last_exit_m5_bar_time.setter
+    def last_exit_m5_bar_time(self, val):
+        self.order_manager.last_exit_m5_bar_time = val
+
+    def get_filling_mode(self, symbol: str) -> int:
+        """Determines the appropriate order filling mode supported by the broker for the symbol."""
+        return self.order_manager.get_filling_mode(symbol)
 
     def log(self, message: str, level: str = "INFO"):
-        """Logs event with timestamp."""
+        """Logs event with timestamp and persists to rotating file."""
         ts = datetime.now().strftime("%H:%M:%S")
         self.logs.append(f"[{ts}] [{level}] {message}")
         if len(self.logs) > 7:
             self.logs.pop(0)
+        # Persistent rotating log entry
+        file_logger.info(f"[{level}] {message}")
 
     def setup(self) -> bool:
         """Initializes connection to MT5 and verifies XAUUSDm."""
@@ -82,378 +137,24 @@ class GoldScalperBot:
             self.log(f"Symbol {self.symbol} could not be verified on MT5.", "ERROR")
             return False
 
-        # Recover state of any already open Gold positions
-        for p in self.get_gold_positions():
-            sig_type = "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL"
-            self.known_positions[p.ticket] = {
-                "ticket": p.ticket,
-                "symbol": self.symbol,
-                "signal": sig_type,
-                "lots": p.volume,
-                "entry": p.price_open,
-                "sl": p.sl,
-                "tp": p.tp,
-                "entry_time": getattr(p, "time", time.time()),
-            }
-            if (sig_type == "BUY" and p.sl >= p.price_open) or (sig_type == "SELL" and p.sl > 0 and p.sl <= p.price_open):
-                self.active_be_locked.add(p.ticket)
-                self.trailing_sl[p.ticket] = p.sl
-                self.last_trail_price[p.ticket] = p.price_open
+        # Recover state of any already open Gold positions using unified tracker
+        self.order_manager.hydrate_active_positions(self.symbol)
 
         self.log(f"Gold Scalper ready! Symbol: {self.symbol} | Magic: {self.magic} | Journal: SQLite Active", "SUCCESS")
         return True
 
     def get_gold_positions(self):
         """Retrieves active positions placed by this Gold Scalper."""
-        all_pos = mt5.positions_get(symbol=self.symbol)
-        if not all_pos:
-            return []
-        return [p for p in all_pos if p.magic == self.magic]
+        return self.order_manager.get_gold_positions()
 
     def manage_gold_positions(self, atr_val: float, current_m5_bar_time: int = 0):
         """Manages Closed Trade Detection, Partial TP, Break-Even, and Dynamic ATR Trailing Stop."""
-        active_positions = self.get_gold_positions()
-        active_tickets = {p.ticket for p in active_positions}
-
-        # 1. Detect Closed Trades (Manual Closes or Broker Hits) & Update SQLite Journal
-        closed_tickets = [t for t in list(self.known_positions.keys()) if t not in active_tickets]
-        for t in closed_tickets:
-            meta = self.known_positions.pop(t, {})
-            self.active_be_locked.discard(t)
-            self.trailing_sl.pop(t, None)
-            self.last_trail_price.pop(t, None)
-
-            if current_m5_bar_time > 0:
-                self.last_exit_m5_bar_time = current_m5_bar_time
-
-            deals = mt5.history_deals_get(position=t)
-            pnl = 0.0
-            exit_price = meta.get("entry", 0.0)
-            close_reason = "Manual / Target Close"
-
-            if deals:
-                pnl = sum(d.profit + d.swap + d.commission for d in deals)
-                exit_deal = deals[-1]
-                exit_price = exit_deal.price
-                cmt = (exit_deal.comment or "").lower()
-                if "sl" in cmt:
-                    close_reason = "Trailing Stop / SL Hit"
-                elif "tp" in cmt:
-                    close_reason = "Take Profit Hit"
-                else:
-                    close_reason = "Manual / Discretionary Close"
-
-            acc = mt5.account_info()
-            bal = acc.balance if acc else 0.0
-            pip_size = self.connector.get_pip_size(self.symbol)
-
-            entry_p = meta.get("entry", exit_price)
-            if meta.get("signal") == "BUY":
-                pips = round((exit_price - entry_p) / max(pip_size, 1e-5), 1)
-            else:
-                pips = round((entry_p - exit_price) / max(pip_size, 1e-5), 1)
-
-            try:
-                self.journal.record_exit(
-                    ticket=t,
-                    exit_price=exit_price,
-                    pips=pips,
-                    pnl_usd=pnl,
-                    balance_after=bal,
-                    close_reason=close_reason,
-                )
-            except Exception as j_err:
-                self.log(f"Journal exit record error: {j_err}", "WARN")
-
-            self.log(f"🏁 Trade Closed #{t} | PnL: ${pnl:+.2f} ({pips:+.1f} pips) | Reason: {close_reason}", "TRADE")
-
-            try:
-                if self.notifier.enabled:
-                    self.notifier.notify_trade_closed(
-                        ticket=t,
-                        symbol=self.symbol,
-                        pnl_usd=pnl,
-                        balance=bal,
-                        reason=close_reason,
-                    )
-            except Exception as notify_err:
-                self.log(f"Discord notify error: {notify_err}", "WARN")
-
-        # 2. Track all active positions in known_positions
-        for p in active_positions:
-            if p.ticket not in self.known_positions:
-                sig_type = "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL"
-                self.known_positions[p.ticket] = {
-                    "ticket": p.ticket,
-                    "symbol": self.symbol,
-                    "signal": sig_type,
-                    "lots": p.volume,
-                    "entry": p.price_open,
-                    "sl": p.sl,
-                    "tp": p.tp,
-                    "entry_time": getattr(p, "time", time.time()),
-                }
-
-        if not active_positions or atr_val <= 0:
-            return
-
-        tick = mt5.symbol_info_tick(self.symbol)
-        if not tick:
-            return
-
-        info = mt5.symbol_info(self.symbol)
-        digits = info.digits if info else 3
-        min_vol = info.volume_min if info else 0.01
-
-        target_tp1 = atr_val * config_gold.PARTIAL_TP_RATIO
-        be_buffer = 0.10  # 10 cents on Gold
-        trail_dist = round(atr_val * config_gold.TRAILING_ATR_MULT, digits)
-        trail_step = getattr(config_gold, "TRAILING_STEP_USD", 0.25)
-
-        for p in active_positions:
-            entry = p.price_open
-            ticket = p.ticket
-            cur_sl = p.sl
-            cur_vol = p.volume
-            p_type = p.type
-
-            if p_type == mt5.ORDER_TYPE_BUY:
-                profit_dist = tick.bid - entry
-                # Stage 1: Partial TP and Break-Even lock
-                if profit_dist >= target_tp1 and ticket not in self.active_be_locked:
-                    if cur_vol >= (min_vol * 2):
-                        close_vol = round(cur_vol / 2.0, 2)
-                        req = {
-                            "action": mt5.TRADE_ACTION_DEAL,
-                            "position": ticket,
-                            "symbol": self.symbol,
-                            "volume": close_vol,
-                            "type": mt5.ORDER_TYPE_SELL,
-                            "price": tick.bid,
-                            "deviation": 20,
-                            "magic": self.magic,
-                            "comment": "Gold Scalp TP1 Partial",
-                            "type_filling": mt5.ORDER_FILLING_IOC
-                        }
-                        res = mt5.order_send(req)
-                        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                            self.log(f"🎯 TP1 hit on Gold #{ticket}: Closed {close_vol} lots @ {tick.bid:.2f}", "TRADE")
-
-                    new_sl = round(entry + be_buffer, digits)
-                    if new_sl > cur_sl:
-                        mod_req = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "position": ticket,
-                            "symbol": self.symbol,
-                            "sl": new_sl,
-                            "tp": p.tp
-                        }
-                        res = mt5.order_send(mod_req)
-                        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                            self.active_be_locked.add(ticket)
-                            self.trailing_sl[ticket] = new_sl
-                            self.last_trail_price[ticket] = tick.bid
-                            self.log(f"🛡️ Risk-Free Lock: SL moved to Break-Even ({new_sl:.2f}) on Gold #{ticket}", "TRADE")
-
-                # Stage 2: Dynamic ATR Trailing Stop (Active once Break-Even is locked)
-                elif config_gold.ENABLE_TRAILING_STOP and ticket in self.active_be_locked:
-                    target_sl = round(tick.bid - trail_dist, digits)
-                    last_sl = max(cur_sl, self.trailing_sl.get(ticket, cur_sl))
-                    last_price = self.last_trail_price.get(ticket, entry)
-
-                    if (tick.bid > last_price + trail_step) and (target_sl >= last_sl + trail_step):
-                        mod_req = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "position": ticket,
-                            "symbol": self.symbol,
-                            "sl": target_sl,
-                            "tp": p.tp
-                        }
-                        res = mt5.order_send(mod_req)
-                        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                            self.trailing_sl[ticket] = target_sl
-                            self.last_trail_price[ticket] = tick.bid
-                            self.log(f"📈 Trailing Stop Advanced on Gold #{ticket}: SL -> ${target_sl:.2f} (Locking profit)", "TRADE")
-                            try:
-                                if self.notifier.enabled:
-                                    self.notifier.notify_trailing_stop_updated(self.symbol, ticket, target_sl)
-                            except Exception as notify_err:
-                                self.log(f"Discord notify error: {notify_err}", "WARN")
-
-            elif p_type == mt5.ORDER_TYPE_SELL:
-                profit_dist = entry - tick.ask
-                # Stage 1: Partial TP and Break-Even lock
-                if profit_dist >= target_tp1 and ticket not in self.active_be_locked:
-                    if cur_vol >= (min_vol * 2):
-                        close_vol = round(cur_vol / 2.0, 2)
-                        req = {
-                            "action": mt5.TRADE_ACTION_DEAL,
-                            "position": ticket,
-                            "symbol": self.symbol,
-                            "volume": close_vol,
-                            "type": mt5.ORDER_TYPE_BUY,
-                            "price": tick.ask,
-                            "deviation": 20,
-                            "magic": self.magic,
-                            "comment": "Gold Scalp TP1 Partial",
-                            "type_filling": mt5.ORDER_FILLING_IOC
-                        }
-                        res = mt5.order_send(req)
-                        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                            self.log(f"🎯 TP1 hit on Gold #{ticket}: Closed {close_vol} lots @ {tick.ask:.2f}", "TRADE")
-
-                    new_sl = round(entry - be_buffer, digits)
-                    if cur_sl == 0 or new_sl < cur_sl:
-                        mod_req = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "position": ticket,
-                            "symbol": self.symbol,
-                            "sl": new_sl,
-                            "tp": p.tp
-                        }
-                        res = mt5.order_send(mod_req)
-                        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                            self.active_be_locked.add(ticket)
-                            self.trailing_sl[ticket] = new_sl
-                            self.last_trail_price[ticket] = tick.ask
-                            self.log(f"🛡️ Risk-Free Lock: SL moved to Break-Even ({new_sl:.2f}) on Gold #{ticket}", "TRADE")
-
-                # Stage 2: Dynamic ATR Trailing Stop (Active once Break-Even is locked)
-                elif config_gold.ENABLE_TRAILING_STOP and ticket in self.active_be_locked:
-                    target_sl = round(tick.ask + trail_dist, digits)
-                    last_sl = min(cur_sl, self.trailing_sl.get(ticket, cur_sl)) if cur_sl > 0 else self.trailing_sl.get(ticket, target_sl + 1.0)
-                    last_price = self.last_trail_price.get(ticket, entry)
-
-                    if (tick.ask < last_price - trail_step) and (target_sl <= last_sl - trail_step):
-                        mod_req = {
-                            "action": mt5.TRADE_ACTION_SLTP,
-                            "position": ticket,
-                            "symbol": self.symbol,
-                            "sl": target_sl,
-                            "tp": p.tp
-                        }
-                        res = mt5.order_send(mod_req)
-                        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                            self.trailing_sl[ticket] = target_sl
-                            self.last_trail_price[ticket] = tick.ask
-                            self.log(f"📈 Trailing Stop Advanced on Gold #{ticket}: SL -> ${target_sl:.2f} (Locking profit)", "TRADE")
-                            try:
-                                if self.notifier.enabled:
-                                    self.notifier.notify_trailing_stop_updated(self.symbol, ticket, target_sl)
-                            except Exception as notify_err:
-                                self.log(f"Discord notify error: {notify_err}", "WARN")
+        active = self.get_gold_positions()
+        return self.order_manager.manage_gold_positions(atr_val, current_m5_bar_time, positions=active)
 
     def execute_scalp(self, sig: str, atr_val: float):
         """Executes a validated Gold scalp order."""
-        if len(self.get_gold_positions()) >= config_gold.MAX_OPEN_POSITIONS:
-            return
-
-        tick = mt5.symbol_info_tick(self.symbol)
-        info = mt5.symbol_info(self.symbol)
-        if not tick or not info:
-            return
-
-        digits = info.digits
-        stop_dist = atr_val * config_gold.ATR_SL_MULTIPLIER
-
-        # Scalp TP explicitly targeted to $3.50 - $5.00 on Gold ($3.50 to $5.00 profit on 0.01 lot)
-        raw_tp = atr_val * getattr(config_gold, "ATR_TP_MULTIPLIER", 1.1)
-        min_tp = getattr(config_gold, "TARGET_TP_MIN_USD", 3.50)
-        max_tp = getattr(config_gold, "TARGET_TP_MAX_USD", 5.00)
-        tp_dist = round(min(max_tp, max(min_tp, raw_tp)), digits)
-
-        sl = round(entry - stop_dist if sig == "BUY" else entry + stop_dist, digits)
-        tp = round(entry + tp_dist if sig == "BUY" else entry - tp_dist, digits)
-
-        # Lot size: 0.01 base or risk-based
-        acc = mt5.account_info()
-        equity = acc.equity if acc else 30.0
-        risk_usd = equity * (config_gold.RISK_PER_TRADE_PERCENT / 100.0)
-        # 1 lot of XAUUSD = 100 oz. $1.00 move = $100 per lot.
-        loss_per_lot = stop_dist * 100.0
-        calc_lots = round(risk_usd / max(loss_per_lot, 1e-9), 2)
-        lots = max(info.volume_min, min(info.volume_max, calc_lots if calc_lots >= info.volume_min else info.volume_min))
-
-        req = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": self.symbol,
-            "volume": lots,
-            "type": mt5.ORDER_TYPE_BUY if sig == "BUY" else mt5.ORDER_TYPE_SELL,
-            "price": entry,
-            "sl": sl,
-            "tp": tp,
-            "deviation": 20,
-            "magic": self.magic,
-            "comment": "Gold Institutional Scalp",
-            "type_filling": mt5.ORDER_FILLING_IOC
-        }
-
-        # Pre-flight Margin Verification
-        req_margin = mt5.order_calc_margin(req["type"], self.symbol, lots, entry)
-        free_margin = acc.margin_free if acc else 0.0
-        if req_margin and req_margin > free_margin:
-            shortfall = req_margin - free_margin
-            self.log(
-                f"❌ Margin Shortfall: {lots} lot Gold requires ${req_margin:.2f} margin "
-                f"(Free: ${free_margin:.2f}, Leverage 1:{acc.leverage if acc else 50}). "
-                f"Shortfall: ${shortfall:.2f}. Increase Exness account leverage to 1:200+ in Personal Area.",
-                "WARN"
-            )
-            return
-
-        t0 = time.perf_counter()
-        res = mt5.order_send(req)
-        latency_ms = (time.perf_counter() - t0) * 1000.0
-
-        if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-            executed_price = res.price if getattr(res, "price", 0.0) else entry
-            pip_size = self.connector.get_pip_size(self.symbol)
-            slippage_pips = round(abs(executed_price - entry) / max(pip_size, 1e-5), 1)
-
-            self.known_positions[res.order] = {
-                "ticket": res.order,
-                "symbol": self.symbol,
-                "signal": sig,
-                "lots": lots,
-                "entry": executed_price,
-                "sl": sl,
-                "tp": tp,
-                "entry_time": time.time(),
-            }
-
-            try:
-                self.journal.record_entry(
-                    ticket=res.order,
-                    symbol=self.symbol,
-                    signal=sig,
-                    lot=lots,
-                    entry_price=executed_price,
-                    sl=sl,
-                    tp=tp,
-                    latency_ms=round(latency_ms, 1),
-                    slippage_pips=slippage_pips
-                )
-            except Exception as j_err:
-                self.log(f"Journal error: {j_err}", "WARN")
-
-            self.log(f"⚡ EXECUTED {sig} on Gold #{res.order} | Lots: {lots:.2f} @ {executed_price:.2f} | Latency: {latency_ms:.1f}ms | Slippage: {slippage_pips:.1f}p", "TRADE")
-            try:
-                if self.notifier.enabled:
-                    self.notifier.notify_trade_opened(
-                        symbol=self.symbol,
-                        signal=sig,
-                        ticket=res.order,
-                        entry=executed_price,
-                        sl=sl,
-                        tp=tp,
-                        lot=lots,
-                        balance=equity
-                    )
-            except Exception as notify_err:
-                self.log(f"Discord notify error: {notify_err}", "WARN")
-        else:
-            err = res.comment if res else str(mt5.last_error())
-            self.log(f"Execution failed on Gold: {err}", "ERROR")
+        return self.order_manager.execute_scalp(sig, atr_val)
 
     def build_dashboard(self, analysis: dict, active_positions: list, cooldown_active: bool = False, bars_remaining: float = 0.0) -> Layout:
         """Renders live terminal dashboard for Gold Scalper."""
@@ -499,17 +200,26 @@ class GoldScalperBot:
         else:
             acc_table.add_row("0.01 Lot Margin", f"[bold green]${needed_margin:.2f} (Ready)[/bold green]")
 
+        max_daily_loss = getattr(config_gold, "MAX_DAILY_LOSS_USD", 5.00)
+        daily_loss_hit = False
         try:
             today_stats = self.journal.get_today_summary()
             j_pnl = today_stats.get("net_pnl", 0.0)
             j_wins = today_stats.get("wins", 0)
             j_losses = today_stats.get("losses", 0)
             j_wr = today_stats.get("win_rate", 0.0)
+            daily_loss_hit = (j_pnl <= -max_daily_loss)
             acc_table.add_row("Today's Closed P&L", f"[{'bold green' if j_pnl >= 0 else 'bold red'}]${j_pnl:+.2f}[/] ({j_wins}W/{j_losses}L - {j_wr:.0f}%)")
         except Exception:
             acc_table.add_row("Today's Closed P&L", "$0.00 (0W/0L)")
 
-        acc_table.add_row("Active Scalper Target", "[bold cyan]$3.50 - $5.00 Scalp Take-Profit[/bold cyan]")
+        # Risk state display (unlimited trade count, capital drawdown protected)
+        if daily_loss_hit:
+            acc_table.add_row("Daily Equity Guard", "[bold red]LOCKED (-$5.00 Max Drawdown Reached)[/bold red]")
+        else:
+            acc_table.add_row("Daily Equity Guard", f"[bold green]OK (Max Loss: -${max_daily_loss:.2f} | Trades: Unlimited)[/bold green]")
+
+        acc_table.add_row("Strategy Target", "[bold cyan]1:2 R:R (1.3x ATR SL / 2.6x ATR TP)[/bold cyan]")
         layout["account_box"].update(Panel(acc_table, title="[bold]Financial Health[/bold]", border_style="blue"))
 
         # Market Box
@@ -525,10 +235,12 @@ class GoldScalperBot:
         m_table.add_row("Gold Spot Price", f"[bold yellow]${tick.bid:.2f} / ${tick.ask:.2f}[/bold yellow]" if tick else "N/A")
         m_table.add_row("Spread", f"{spread_pts:.0f} pts (${spread_pts*0.001:.2f})")
         m_table.add_row("M5 / H1 Trend", f"{metrics.get('close', 0.0)} | H1: [bold]{metrics.get('h1_trend', 'N/A')}[/bold]")
+        m_table.add_row("Volume Ratio", f"{metrics.get('vol_ratio', 1.0):.2f}x (SMA 20)")
         m_table.add_row("CHOP / ADX", f"CHOP: {metrics.get('chop', 0.0):.1f} | ADX: {metrics.get('adx', 0.0):.1f}")
         cd_display = "[bold green]READY[/bold green]" if not cooldown_active else f"[bold yellow]WAITING ({bars_remaining:.0f} M5 Bar)[/bold yellow]"
         m_table.add_row("Exit Cooldown", cd_display)
-        m_table.add_row("M1 Micro Guard", "[bold green]ACTIVE (Turn Confirmed)[/bold green]")
+        cb_display = "[bold red]PAUSED (3 Losses)[/bold red]" if getattr(self, "circuit_breaker_active", False) else "[bold green]CLEAR[/bold green]"
+        m_table.add_row("Circuit Breaker", cb_display)
         m_table.add_row("Scalp Signal", f"[{'bold green' if sig == 'BUY' else ('bold red' if sig == 'SELL' else 'bold yellow')}]{sig}[/] ({conf*100:.0f}%)")
         layout["market_box"].update(Panel(m_table, title="[bold]Gold Scalper Edge & Confluence[/bold]", border_style="gold1"))
 
@@ -569,10 +281,22 @@ class GoldScalperBot:
         try:
             with Live(console=console, refresh_per_second=2, screen=False) as live:
                 while self.running:
-                    # 1. Fetch data: M5 primary, H1 macro, M1 micro-structure
+                    # 0. Self-Healing Connection Health Check & Terminal Auto-Recovery
+                    if not self.connector.ensure_connection():
+                        self.log("⚠️ MT5 connection drop detected. Auto-reconnecting to Exness...", "WARN")
+                        time.sleep(3)
+                        continue
+
+                    # 1. Fetch data: M5 primary, H1 macro (220 bars for EMA 50/200), M1 micro-structure
                     m5_rates = self.connector.get_rates(self.symbol, config_gold.TIMEFRAME, count=100)
-                    h1_rates = self.connector.get_rates(self.symbol, config_gold.HIGHER_TIMEFRAME, count=50)
+                    h1_rates = self.connector.get_rates(self.symbol, config_gold.HIGHER_TIMEFRAME, count=220)
                     m1_rates = self.connector.get_rates(self.symbol, config_gold.SCALP_TIMEFRAME, count=30)
+
+                    if m5_rates is None or len(m5_rates) == 0:
+                        self.log("⚠️ M5 data feed unavailable. Checking MT5 terminal link...", "WARN")
+                        self.connector.ensure_connection()
+                        time.sleep(2)
+                        continue
 
                     current_m5_bar_time = m5_rates[-1]["time"] if m5_rates is not None and len(m5_rates) > 0 else 0
 
@@ -597,14 +321,65 @@ class GoldScalperBot:
                             cooldown_active = True
                             bars_remaining = needed - bars_elapsed
 
-                    # 5. Execute if valid signal, no active trades, and cooldown has passed
-                    if sig in ["BUY", "SELL"] and len(active_positions) < config_gold.MAX_OPEN_POSITIONS:
-                        if not cooldown_active:
-                            self.execute_scalp(sig, atr_val)
-                        else:
-                            self.log("⏸️ Cooldown Guard: Waiting for 1 full new completed M5 candle after exit.", "INFO")
+                    # 5. Consecutive Loss Circuit Breaker Check
+                    loss_limit = getattr(config_gold, "CONSECUTIVE_LOSS_LIMIT", 3)
+                    cooling_bars = getattr(config_gold, "CONSECUTIVE_LOSS_COOLDOWN_BARS", 6)
+                    if not self.circuit_breaker_active:
+                        try:
+                            rows = self.journal._execute(
+                                "SELECT outcome FROM trades WHERE symbol = ? AND exit_time IS NOT NULL ORDER BY id DESC LIMIT ?",
+                                (self.symbol, loss_limit),
+                                fetch=True,
+                                fetchall=True
+                            )
+                            if rows and len(rows) >= loss_limit and all(r[0] == "LOSS" for r in rows):
+                                self.circuit_breaker_active = True
+                                self.circuit_breaker_until_bar = current_m5_bar_time + (cooling_bars * 300)
+                                self.log(f"⚠️ Circuit Breaker: {loss_limit} consecutive losses hit. Pausing for {cooling_bars} bars.", "WARN")
+                        except Exception:
+                            pass
+                    else:
+                        if current_m5_bar_time >= self.circuit_breaker_until_bar:
+                            self.circuit_breaker_active = False
+                            self.log("✅ Circuit Breaker cooling period finished. Resuming scalp executions.", "SUCCESS")
 
-                    # 6. Render dashboard
+                    # 6. Check Daily Equity Drawdown Limit (Uncapped trades, but equity protected)
+                    daily_drawdown_locked = False
+                    max_loss = getattr(config_gold, "MAX_DAILY_LOSS_USD", 5.00)
+                    try:
+                        today_stats = self.journal.get_today_summary()
+                        if today_stats.get("net_pnl", 0.0) <= -max_loss:
+                            daily_drawdown_locked = True
+                    except Exception:
+                        pass
+
+                    # 7. Check High-Impact News Blackout
+                    news_blackout = False
+                    news_reason = ""
+                    if self.news_filter and getattr(config_gold, "NEWS_FILTER_ENABLED", True):
+                        self.news_filter.fetch_calendar_async()
+                        is_blocked, ev_title, _ = self.news_filter.is_news_blackout(self.symbol)
+                        if is_blocked:
+                            news_blackout = True
+                            news_reason = ev_title
+
+                    # 8. Execute if valid signal, no active trades, and guards pass
+                    if sig in ["BUY", "SELL"] and len(active_positions) < config_gold.MAX_OPEN_POSITIONS:
+                        if cooldown_active:
+                            self.log("⏸️ Cooldown Guard: Waiting for 1 full new completed M5 candle after exit.", "INFO")
+                        elif self.circuit_breaker_active:
+                            self.log(f"⏸️ Circuit Breaker: Paused due to {loss_limit} consecutive losses.", "WARN")
+                        elif daily_drawdown_locked:
+                            self.log(f"🛑 Equity Guard: Daily loss limit hit (-${max_loss:.2f}). Trading paused for today.", "WARN")
+                        elif news_blackout:
+                            self.log(f"📰 News Guard: Trading halted due to High-Impact News: {news_reason}", "WARN")
+                        else:
+                            # Re-verify position count to prevent race conditions
+                            fresh_positions = self.get_gold_positions()
+                            if len(fresh_positions) < config_gold.MAX_OPEN_POSITIONS:
+                                self.execute_scalp(sig, atr_val)
+
+                    # 9. Render dashboard
                     dashboard = self.build_dashboard(analysis, active_positions, cooldown_active, bars_remaining)
                     live.update(dashboard)
 

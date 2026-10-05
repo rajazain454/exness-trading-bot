@@ -6,101 +6,29 @@ import MetaTrader5 as mt5
 import config
 from notifier import DiscordNotifier
 from journal import TradeJournal
+from crypto_forex_bot.base_order_manager import BaseOrderManager
 
 logger = logging.getLogger("OrderManager")
 
-class OrderManager:
+class OrderManager(BaseOrderManager):
     """
     Manages order execution, millisecond latency & slippage monitoring,
     limit pullback entries, smart partial profit-taking, break-even locks,
     trailing stops, and Friday market close protection.
+    Inherits core broker primitives and state tracking from BaseOrderManager.
     """
 
     def __init__(self, connector, risk_manager=None):
-        self.connector = connector
-        self.risk_manager = risk_manager
-        self.notifier = DiscordNotifier()
-        self.journal = TradeJournal()
-        self.tracked_positions: Dict[int, Dict[str, Any]] = {}
+        super().__init__(
+            connector=connector,
+            magic_number=config.MAGIC_NUMBER,
+            notifier=DiscordNotifier(),
+            journal=TradeJournal(),
+            risk_manager=risk_manager,
+            deviation_points=config.DEVIATION_POINTS,
+        )
         # Hydrate existing positions across restarts
         self.hydrate_active_positions()
-
-    def hydrate_active_positions(self):
-        """
-        Restores tracking state for all open MT5 bot positions on startup.
-        Ensures trailing stops, break-even locks, partial TP, and journal exit logging
-        work seamlessly across bot restarts.
-        """
-        positions = self.get_bot_positions()
-        if not positions:
-            return
-
-        for pos in positions:
-            ticket = pos.ticket
-            if ticket in self.tracked_positions:
-                continue
-
-            trade = self.journal.get_trade(ticket)
-            signal = "BUY" if pos.type == mt5.ORDER_TYPE_BUY else "SELL"
-            entry_price = float(pos.price_open)
-            sl = float(pos.sl)
-            tp = float(pos.tp)
-            volume = float(pos.volume)
-
-            be_locked = False
-            partial_closed = False
-
-            if trade:
-                signal = trade.get("signal", signal)
-                orig_lot = trade.get("lot", volume)
-                entry_price = trade.get("entry_price", entry_price)
-                if volume < orig_lot:
-                    partial_closed = True
-
-            pip_size = self.connector.get_pip_size(pos.symbol)
-            if signal == "BUY" and sl >= (entry_price + (config.BREAKEVEN_OFFSET_PIPS * pip_size * 0.5)):
-                be_locked = True
-            elif signal == "SELL" and sl > 0 and sl <= (entry_price - (config.BREAKEVEN_OFFSET_PIPS * pip_size * 0.5)):
-                be_locked = True
-
-            self.tracked_positions[ticket] = {
-                "symbol": pos.symbol,
-                "signal": signal,
-                "entry": entry_price,
-                "lot": volume,
-                "sl": sl,
-                "tp": tp,
-                "be_locked": be_locked,
-                "partial_closed": partial_closed
-            }
-
-            if not trade:
-                self.journal.record_entry(
-                    ticket=ticket,
-                    symbol=pos.symbol,
-                    signal=signal,
-                    lot=volume,
-                    entry_price=entry_price,
-                    sl=sl,
-                    tp=tp,
-                    latency_ms=0.0,
-                    slippage_pips=0.0
-                )
-
-            logger.info(f"Hydrated active position #{ticket} ({pos.symbol}, {signal}, {volume} lot). BE: {be_locked}, Partial Closed: {partial_closed}")
-
-    def get_pending_orders(self, symbol: Optional[str] = None) -> List[Any]:
-        """Retrieves active pending orders opened by this bot."""
-        orders = mt5.orders_get(symbol=symbol) if symbol else mt5.orders_get()
-        if orders is None:
-            return []
-        return [o for o in orders if o.magic == config.MAGIC_NUMBER]
-
-    def get_bot_active_and_pending_count(self, symbol: Optional[str] = None) -> int:
-        """Counts both filled positions and unfilled pending orders."""
-        positions = self.get_bot_positions(symbol)
-        pending = self.get_pending_orders(symbol)
-        return len(positions) + len(pending)
 
     def cancel_expired_pending_orders(self) -> int:
         """
@@ -124,7 +52,7 @@ class OrderManager:
                 request = {
                     "action": mt5.TRADE_ACTION_REMOVE,
                     "order": order.ticket,
-                    "magic": config.MAGIC_NUMBER
+                    "magic": self.magic_number
                 }
                 result = mt5.order_send(request)
                 if result and result.retcode == mt5.TRADE_RETCODE_DONE:
@@ -136,19 +64,6 @@ class OrderManager:
                     logger.warning(f"Failed to cancel pending order #{order.ticket}: {err}")
 
         return cancelled_count
-
-    def get_filling_mode(self, symbol: str) -> int:
-        """Determines the appropriate order filling mode for the symbol."""
-        info = mt5.symbol_info(symbol)
-        if not info:
-            return mt5.ORDER_FILLING_IOC
-
-        filling_mode = info.filling_mode
-        if filling_mode & 2:
-            return mt5.ORDER_FILLING_IOC
-        elif filling_mode & 1:
-            return mt5.ORDER_FILLING_FOK
-        return mt5.ORDER_FILLING_IOC
 
     def open_position(self, symbol: str, signal: str, trade_params: Dict[str, float]) -> Optional[int]:
         """
@@ -165,7 +80,16 @@ class OrderManager:
 
         # Check entry mode: Market vs Limit Pullback
         if config.ENTRY_ORDER_TYPE == "LIMIT_PULLBACK":
-            limit_offset = config.LIMIT_PULLBACK_OFFSET_PIPS * pip_size
+            atr_val = trade_params.get("atr", 0.0)
+            is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+            if atr_val > 0:
+                limit_offset = 0.10 * atr_val
+            elif is_crypto:
+                spread_dist = tick.ask - tick.bid
+                limit_offset = max(spread_dist * 1.5, 10.0 * pip_size)
+            else:
+                limit_offset = config.LIMIT_PULLBACK_OFFSET_PIPS * pip_size
+
             order_type = mt5.ORDER_TYPE_BUY_LIMIT if signal == "BUY" else mt5.ORDER_TYPE_SELL_LIMIT
             req_price = round((tick.ask - limit_offset) if signal == "BUY" else (tick.bid + limit_offset), 5)
             action = mt5.TRADE_ACTION_PENDING
@@ -183,7 +107,7 @@ class OrderManager:
             "sl": float(trade_params["sl"]),
             "tp": float(trade_params["tp"]),
             "deviation": int(config.DEVIATION_POINTS),
-            "magic": int(config.MAGIC_NUMBER),
+            "magic": self.magic_number,
             "comment": f"Exness_{config.ENTRY_ORDER_TYPE}",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling,
@@ -208,19 +132,8 @@ class OrderManager:
 
         logger.info(f"Order #{ticket} executed ({config.ENTRY_ORDER_TYPE}) on Exness! Latency: {latency_ms:.1f}ms | Slippage: {slippage_pips}p")
 
-        self.tracked_positions[ticket] = {
-            "symbol": symbol,
-            "signal": signal,
-            "entry": float(executed_price),
-            "lot": float(trade_params["lot"]),
-            "sl": float(trade_params["sl"]),
-            "tp": float(trade_params["tp"]),
-            "be_locked": False,
-            "partial_closed": False
-        }
-
-        # Log into SQLite Journal with latency and slippage
-        self.journal.record_entry(
+        # Unified tracking and journaling in BaseOrderManager
+        self.record_new_position(
             ticket=ticket,
             symbol=symbol,
             signal=signal,
@@ -228,76 +141,11 @@ class OrderManager:
             entry_price=float(executed_price),
             sl=float(trade_params["sl"]),
             tp=float(trade_params["tp"]),
-            latency_ms=round(latency_ms, 1),
+            latency_ms=latency_ms,
             slippage_pips=slippage_pips
         )
 
-        acc = self.connector.get_account_summary()
-        self.notifier.notify_trade_opened(
-            symbol=symbol,
-            signal=signal,
-            ticket=ticket,
-            entry=executed_price,
-            sl=trade_params["sl"],
-            tp=trade_params["tp"],
-            lot=trade_params["lot"],
-            balance=acc.get("balance", 0.0)
-        )
-
         return ticket
-
-    def get_bot_positions(self, symbol: Optional[str] = None) -> List[Any]:
-        """Retrieves active positions opened by this bot."""
-        if symbol:
-            positions = mt5.positions_get(symbol=symbol)
-        else:
-            positions = mt5.positions_get()
-
-        if positions is None:
-            return []
-
-        bot_positions = [pos for pos in positions if pos.magic == config.MAGIC_NUMBER]
-        return bot_positions
-
-    def update_sl(self, position, new_sl: float) -> bool:
-        """Modifies Stop Loss in MT5."""
-        request = {
-            "action": mt5.TRADE_ACTION_SLTP,
-            "position": position.ticket,
-            "symbol": position.symbol,
-            "sl": round(new_sl, 5),
-            "tp": position.tp,
-            "magic": config.MAGIC_NUMBER
-        }
-        result = mt5.order_send(request)
-        return bool(result and result.retcode == mt5.TRADE_RETCODE_DONE)
-
-    def close_partial_position(self, position, close_volume: float) -> bool:
-        """Closes a partial volume of an active position (e.g. 50% scale-out)."""
-        tick = self.connector.get_symbol_tick(position.symbol)
-        if not tick:
-            return False
-
-        order_type = mt5.ORDER_TYPE_SELL if position.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
-        price = tick.bid if position.type == mt5.ORDER_TYPE_BUY else tick.ask
-        filling = self.get_filling_mode(position.symbol)
-
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "position": position.ticket,
-            "symbol": position.symbol,
-            "volume": float(close_volume),
-            "type": order_type,
-            "price": price,
-            "deviation": config.DEVIATION_POINTS,
-            "magic": config.MAGIC_NUMBER,
-            "comment": "Exness_PartialTP",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling,
-        }
-
-        result = mt5.order_send(request)
-        return bool(result and result.retcode == mt5.TRADE_RETCODE_DONE)
 
     def manage_trailing_and_breakeven(self, symbol: str):
         """Monitors active trades for Smart Partial TP, Break-Even, and Trailing Stops."""
@@ -347,6 +195,7 @@ class OrderManager:
                         close_vol = round(pos.volume * config.PARTIAL_CLOSE_RATIO, 2)
                         if self.close_partial_position(pos, close_vol):
                             pos_meta["partial_closed"] = True
+                            remaining_vol = round(pos.volume - close_vol, 2)
                             pips_banked = current_profit_distance / pip_size
                             pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
                             pnl_banked = round(pips_banked * pip_dollar_val, 2)
@@ -408,84 +257,25 @@ class OrderManager:
 
     def _handle_position_closed(self, ticket: int):
         """Fetches final deal profit from MT5, updates SQLite journal, and notifies Discord."""
-        pos_meta = self.tracked_positions.pop(ticket, None)
-        if not pos_meta:
-            return
+        self.detect_and_handle_closed_positions()
 
-        deals = mt5.history_deals_get(position=ticket)
-        pnl = 0.0
-        exit_price = 0.0
-        reason = "Stop Loss / Take Profit Hit"
-        if deals:
-            pnl = sum(d.profit + d.swap + d.commission for d in deals)
-            exit_price = deals[-1].price
-
-        acc = self.connector.get_account_summary()
-        balance = acc.get("balance", 0.0) if acc else 0.0
-        sym = pos_meta.get("symbol", config.SYMBOL)
-        pip_size = self.connector.get_pip_size(sym)
-        pips = round((exit_price - pos_meta["entry"]) / pip_size, 1) if pos_meta.get("signal") == "BUY" else round((pos_meta["entry"] - exit_price) / pip_size, 1)
-
-        self.journal.record_exit(ticket, exit_price, pips, pnl, balance, reason)
-
-        is_win = pnl >= 0
-        if self.risk_manager:
-            self.risk_manager.register_trade_outcome(is_win)
-
-        self.notifier.notify_trade_closed(ticket, sym, pnl, balance, reason)
-
-    def check_friday_auto_close(self, symbols: List[str]) -> bool:
-        """Closes all active positions on Friday before weekend gap risk."""
+    def check_friday_auto_close(self, symbols: Optional[List[str]] = None) -> bool:
+        """Closes active Forex positions on Friday before weekend gap risk. Exempts 24/7 crypto."""
         if not config.FRIDAY_AUTO_CLOSE_ENABLED:
             return False
 
         now_utc = datetime.now(timezone.utc)
         if now_utc.weekday() == 4 and now_utc.hour >= config.FRIDAY_CUTOFF_HOUR_UTC:
             positions = self.get_bot_positions()
-            if positions:
-                logger.info(f"Friday cutoff reached ({now_utc.hour:02d}:00 UTC). Auto-closing {len(positions)} positions.")
-                for pos in positions:
+            # Filter to Forex/metal positions only; 24/7 crypto trades continuously
+            forex_positions = [
+                p for p in positions
+                if not any(c in getattr(p, "symbol", "").upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+            ]
+            if forex_positions:
+                logger.info(f"Friday cutoff reached ({now_utc.hour:02d}:00 UTC). Auto-closing {len(forex_positions)} Forex positions (Crypto exempted).")
+                for pos in forex_positions:
                     self.close_position(pos, reason="Friday Weekend Gap Protection")
                 return True
         return False
 
-    def close_position(self, position, reason: str = "Manual / System Close") -> bool:
-        """Closes an active position immediately at market price."""
-        tick = self.connector.get_symbol_tick(position.symbol)
-        if not tick:
-            return False
-
-        order_type = mt5.ORDER_TYPE_SELL if position.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
-        price = tick.bid if position.type == mt5.ORDER_TYPE_BUY else tick.ask
-        filling = self.get_filling_mode(position.symbol)
-
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "position": position.ticket,
-            "symbol": position.symbol,
-            "volume": position.volume,
-            "type": order_type,
-            "price": price,
-            "deviation": config.DEVIATION_POINTS,
-            "magic": config.MAGIC_NUMBER,
-            "comment": f"Close: {reason[:20]}",
-            "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": filling,
-        }
-
-        result = mt5.order_send(request)
-        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
-            logger.info(f"Closed position #{position.ticket} ({reason})")
-            acc = self.connector.get_account_summary()
-            balance = acc.get("balance", 0.0) if acc else 0.0
-            
-            pip_size = self.connector.get_pip_size(position.symbol)
-            pips = round((price - position.price_open) / pip_size, 1) if position.type == mt5.ORDER_TYPE_BUY else round((position.price_open - price) / pip_size, 1)
-            self.journal.record_exit(position.ticket, price, pips, position.profit, balance, reason)
-            
-            if self.risk_manager:
-                self.risk_manager.register_trade_outcome(position.profit >= 0)
-
-            self.notifier.notify_trade_closed(position.ticket, position.symbol, position.profit, balance, reason)
-            return True
-        return False

@@ -9,5 +9,6 @@
     "crypto_forex_bot",
     "gold_scalper"
   ],
-  "typeCheckingMode": "basic"
+  "typeCheckingMode": "basic",
+  "reportAttributeAccessIssue": "none"
 }

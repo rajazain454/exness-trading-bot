@@ -1,0 +1,97 @@
+{
+    "baseline": {
+        "total_trades": 636,
+        "win_rate": 55.3,
+        "total_r": 6.04,
+        "profit_factor": 1.02,
+        "max_dd_r": 25.77
+    },
+    "spread_stress": {
+        "$0.15": {
+            "total_trades": 636,
+            "win_rate": 55.3,
+            "total_r": 6.04,
+            "profit_factor": 1.02,
+            "max_dd_r": 25.77
+        },
+        "$0.20": {
+            "total_trades": 636,
+            "win_rate": 54.9,
+            "total_r": -0.56,
+            "profit_factor": 1.0,
+            "max_dd_r": 27.24
+        },
+        "$0.25": {
+            "total_trades": 637,
+            "win_rate": 54.6,
+            "total_r": -5.26,
+            "profit_factor": 0.98,
+            "max_dd_r": 29.71
+        },
+        "$0.35": {
+            "total_trades": 638,
+            "win_rate": 53.4,
+            "total_r": -21.74,
+            "profit_factor": 0.93,
+            "max_dd_r": 32.06
+        },
+        "$0.50": {
+            "total_trades": 638,
+            "win_rate": 51.7,
+            "total_r": -42.41,
+            "profit_factor": 0.86,
+            "max_dd_r": 50.22
+        }
+    },
+    "slippage_stress": {
+        "$0.05": {
+            "total_trades": 638,
+            "win_rate": 53.4,
+            "total_r": -23.28,
+            "profit_factor": 0.92,
+            "max_dd_r": 32.68
+        },
+        "$0.10": {
+            "total_trades": 637,
+            "win_rate": 52.4,
+            "total_r": -40.95,
+            "profit_factor": 0.87,
+            "max_dd_r": 47.92
+        },
+        "$0.15": {
+            "total_trades": 638,
+            "win_rate": 51.7,
+            "total_r": -51.75,
+            "profit_factor": 0.84,
+            "max_dd_r": 59.41
+        },
+        "$0.25": {
+            "total_trades": 638,
+            "win_rate": 50.2,
+            "total_r": -73.76,
+            "profit_factor": 0.78,
+            "max_dd_r": 78.89
+        }
+    },
+    "high_vol_regime": {
+        "total_trades": 198,
+        "win_rate": 53.5,
+        "total_r": -4.9,
+        "profit_factor": 0.95,
+        "max_dd_r": 12.4
+    },
+    "monte_carlo": {
+        "simulations": 10000,
+        "base_max_consecutive_losses": 8,
+        "mc_max_consecutive_losses_p95": 10,
+        "mc_max_consecutive_losses_p99": 13,
+        "max_dd_p50": 24.17,
+        "max_dd_p95": 47.91,
+        "max_dd_p99": 60.93,
+        "terminal_r_p05": -32.65,
+        "terminal_r_p50": 6.15,
+        "terminal_r_p95": 44.88,
+        "ruin_risk_pct_under_15r": 88.78,
+        "ruin_risk_pct_under_25r": 46.56
+    }
+}

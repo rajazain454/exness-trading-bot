@@ -67,12 +67,12 @@
             "base_sl_mult": 1.2
         },
         "one_year_performance": {
-            "total_trades": 80,
-            "win_rate": 62.5,
-            "total_r_gain": 11.62,
-            "profit_factor": 1.38,
+            "total_trades": 81,
+            "win_rate": 63.0,
+            "total_r_gain": 11.72,
+            "profit_factor": 1.39,
             "max_drawdown_r": 7.46,
-            "expected_value_r": 0.15
+            "expected_value_r": 0.14
         }
     },
     "EURUSDm": {
@@ -105,12 +105,12 @@
             "base_sl_mult": 1.5
         },
         "one_year_performance": {
-            "total_trades": 105,
-            "win_rate": 64.8,
-            "total_r_gain": 6.09,
-            "profit_factor": 1.17,
+            "total_trades": 106,
+            "win_rate": 64.2,
+            "total_r_gain": 5.09,
+            "profit_factor": 1.13,
             "max_drawdown_r": 5.22,
-            "expected_value_r": 0.06
+            "expected_value_r": 0.05
         }
     },
     "USDJPYm": {
@@ -143,12 +143,12 @@
             "base_sl_mult": 1.5
         },
         "one_year_performance": {
-            "total_trades": 23,
-            "win_rate": 47.8,
-            "total_r_gain": -6.3,
-            "profit_factor": 0.48,
-            "max_drawdown_r": 6.4,
-            "expected_value_r": -0.27
+            "total_trades": 22,
+            "win_rate": 50.0,
+            "total_r_gain": -5.3,
+            "profit_factor": 0.52,
+            "max_drawdown_r": 5.4,
+            "expected_value_r": -0.24
         }
     }
 }

@@ -153,40 +153,33 @@ Trained over **1 Full Year (~100,000 M5 bars per instrument)** directly on live 
 
 ---
 
-## 🚀 How to Run the Bot
+## 🚀 How to Run the Suites
 
-### 1. Launch the Suite
-In your terminal, run:
+### 1. Suite 1: Crypto & Forex Engine
+- **Step 1**: Double-click **[start_crypto_server.bat](file:///f:/Random/WORK/exness/start_crypto_server.bat)** in the root folder to start the FastAPI ML brain on `http://127.0.0.1:8000`.
+- **Step 2**: In MetaTrader 5, attach **[mt5_eas/Octa_Hybrid_Demo_EA.mq5](file:///f:/Random/WORK/exness/mt5_eas/Octa_Hybrid_Demo_EA.mq5)** to `BTCUSDm, M5` (ensure `http://127.0.0.1:8000` is added in MT5 `Tools -> Options -> Expert Advisors -> Allow WebRequest`).
+- *Alternative*: To run the standalone background Python swing bot without the EA, execute `crypto_forex_bot\start_bot_background.bat`.
+
+### 2. Suite 2: Dedicated Institutional Gold (XAUUSDm) Scalper
+- Double-click **[gold_scalper/start_gold_scalper.bat](file:///f:/Random/WORK/exness/gold_scalper/start_gold_scalper.bat)**.
+- Opens an interactive live terminal dashboard monitoring London & NY session momentum (08:00 - 17:00 UTC), Choppiness filter ($\le 50.0$), Z-score floor ($\le 1.5$), and dynamic ATR trailing stop.
+- *Keep the MT5 `XAUUSDm` chart clean (no EA attached) to prevent dual-execution conflicts.*
+
+### 3. Run Diagnostic & Stress Tests
+You can run the end-to-end unit and stress test suite at any time:
 ```powershell
-python run_bot.py
+python -m unittest discover tests
 ```
-
-Choose from the interactive menu:
-- `[1] Start Live Trading Bot` - Launches multi-pair basket scanning with real-time Rich dashboard.
-- `[2] Run 6-Factor Quant Backtest` - Compares standard benchmark vs. quant edge.
-- `[3] Inspect Exness Account & Market Status` - Checks live balance, margin, spread, and quotes.
-- `[4] View SQLite Trade Journal & Analytics` - Displays lifetime win rate, profit factor, and today's summary.
-- `[5] Run Hard Test & Train Bot` - Executes full diagnostic test suite & parameter optimizer.
-- `[6] Exit`
-
-### 2. Direct Hard Stress Test Command
-You can run the full end-to-end 6-factor hard test suite at any time:
+or run the extreme quant edge test:
 ```powershell
-python extreme_test.py
+python tests/extreme_test.py
 ```
-This validates:
-1. Mathematical Bounds & Kelly Stress Test
-2. Exness Broker Order Checks & Dynamic Pip Dollar Values
-3. State Hydration across Restarts & Pending Orders Lifecycle
-4. Strategy Engine & Unmitigated Fair Value Gap (FVG) Detection
-5. Risk Gatekeepers & Intraday Peak-Equity Trailing Circuit Breaker
-6. SQLite Database Journal Integrity & Concurrency
 
 ---
 
 ## 🔄 Transitioning from Demo to Real Account
 
-When you have observed demo execution and feel confident:
+When you have observed execution and feel confident:
 1. In your **Exness Personal Area**, locate your Real MT5 Account Number and Server (e.g., `Exness-MT5Real`).
 2. Log into this account inside your MT5 desktop client (`File -> Login to Trade Account`), or set `MT5_LOGIN`, `MT5_PASSWORD`, and `MT5_SERVER` in your [.env](file:///f:/Random/WORK/exness/.env).
-3. Launch `python run_bot.py`. The bot will apply the exact same risk protection rules to your real funds.
+3. The bots will automatically detect and apply the exact same risk protection rules to your live capital.

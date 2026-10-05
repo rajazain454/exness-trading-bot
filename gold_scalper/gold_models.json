@@ -3,24 +3,43 @@
     "asset_name": "Gold vs US Dollar",
     "timeframe": "M5",
     "higher_timeframe": "H1",
+    "validation_method": "Walk-Forward Out-Of-Sample (8M Train / 4M Test)",
     "optimal_parameters": {
         "session_start_hour_utc": 8,
-        "session_end_hour_utc": 16,
-        "chop_max": 52.0,
-        "z_score_limit": 2.0,
+        "session_end_hour_utc": 17,
+        "cooldown_m5_bars": 3,
+        "chop_max": 50.0,
+        "z_score_limit": 1.5,
+        "adx_min": 20.0,
         "base_sl_mult": 1.3,
-        "tp1_mult": 1.0,
-        "tp2_mult": 1.5,
-        "break_even_buffer_usd": 0.10,
-        "min_rejection_wick_ratio": 0.25,
-        "adx_min": 20.0
+        "tp1_mult": 1.1,
+        "tp2_mult": 1.8,
+        "break_even_buffer_usd": 0.15,
+        "min_rejection_wick_ratio": 0.15
     },
-    "one_year_performance": {
-        "total_trades": 491,
-        "win_rate": 56.6,
-        "total_r_gain": 43.62,
-        "profit_factor": 1.21,
-        "avg_trades_per_day": 2.1,
-        "tested_period": "2025-11-03 to 2026-10-05 (65,000 M5 bars)"
-    }
+    "in_sample_8months_performance": {
+        "total_trades": 265,
+        "win_rate": 60.4,
+        "total_r": 2.98,
+        "profit_factor": 1.03,
+        "max_drawdown_r": 11.29,
+        "expected_value_r": 0.011
+    },
+    "out_of_sample_4months_unseen_performance": {
+        "total_trades": 124,
+        "win_rate": 64.5,
+        "total_r": 17.58,
+        "profit_factor": 1.4,
+        "max_drawdown_r": 5.32,
+        "expected_value_r": 0.142
+    },
+    "full_one_year_performance": {
+        "total_trades": 389,
+        "win_rate": 61.7,
+        "total_r": 20.56,
+        "profit_factor": 1.13,
+        "max_drawdown_r": 11.29,
+        "expected_value_r": 0.053
+    },
+    "optimized_at_utc": "2026-10-05T23:21:35.080419+00:00"
 }

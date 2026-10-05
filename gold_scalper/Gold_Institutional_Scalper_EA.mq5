@@ -2,6 +2,12 @@
 //|                 Gold_Institutional_Scalper_EA.mq5                |
 //|                 High-Precision MT5 Gold (XAUUSDm) Scalper        |
 //|                 Magic Number: 777001                             |
+//|                                                                  |
+//| ⚠️ CRITICAL NOTICE - MUTUAL EXCLUSION:                           |
+//| DO NOT attach this EA if you are running the Python Gold Bot     |
+//| (gold_scalper\start_gold_scalper.bat). Both share Magic 777001   |
+//| and XAUUSDm. Running both concurrently causes conflicting orders!|
+//| The Python engine is the recommended full-quant version.        |
 //+------------------------------------------------------------------+
 #property copyright "Institutional Gold Scalper"
 #property version   "1.00"

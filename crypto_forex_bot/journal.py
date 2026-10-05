@@ -151,7 +151,8 @@ class TradeJournal:
         """
         rows = self._execute(query, (f"{today_prefix}%",), fetch=True, fetchall=True)
 
-        total = len(rows) if rows else 0
+        rows = rows or []
+        total = len(rows)
         if total == 0:
             return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0.0, "net_pnl": 0.0, "total_pips": 0.0}
 
@@ -170,14 +171,37 @@ class TradeJournal:
             "total_pips": round(total_pips, 1)
         }
 
-    def get_all_time_stats(self) -> Dict[str, Any]:
-        """Calculates lifetime performance statistics."""
-        query = "SELECT outcome, pnl_usd FROM trades WHERE exit_time IS NOT NULL"
+    def get_all_time_stats(self, asset_type: Optional[str] = None) -> Dict[str, Any]:
+        """Calculates lifetime performance statistics, optionally partitioned by asset_type ('CRYPTO' vs 'FOREX')."""
+        if asset_type == "CRYPTO":
+            query = """
+                SELECT outcome, pnl_usd FROM trades 
+                WHERE exit_time IS NOT NULL 
+                AND (symbol LIKE '%BTC%' OR symbol LIKE '%ETH%' OR symbol LIKE '%SOL%' OR symbol LIKE '%XRP%')
+            """
+        elif asset_type == "FOREX":
+            query = """
+                SELECT outcome, pnl_usd FROM trades 
+                WHERE exit_time IS NOT NULL 
+                AND NOT (symbol LIKE '%BTC%' OR symbol LIKE '%ETH%' OR symbol LIKE '%SOL%' OR symbol LIKE '%XRP%')
+            """
+        else:
+            query = "SELECT outcome, pnl_usd FROM trades WHERE exit_time IS NOT NULL"
         rows = self._execute(query, fetch=True, fetchall=True)
 
-        total = len(rows) if rows else 0
+        rows = rows or []
+        total = len(rows)
         if total == 0:
-            return {"total": 0, "win_rate": 0.0, "profit_factor": 0.0, "net_pnl": 0.0}
+            return {
+                "total": 0,
+                "wins": 0,
+                "losses": 0,
+                "win_rate": 0.0,
+                "profit_factor": 0.0,
+                "net_pnl": 0.0,
+                "avg_win_usd": 0.0,
+                "avg_loss_usd": 0.0
+            }
 
         wins = sum(1 for r in rows if r[0] == "WIN")
         losses = total - wins
@@ -185,6 +209,8 @@ class TradeJournal:
         loss_pnl = abs(sum(r[1] for r in rows if r[1] < 0))
         pf = (win_pnl / loss_pnl) if loss_pnl > 0 else 999.0
         net_pnl = sum(r[1] for r in rows)
+        avg_win = (win_pnl / wins) if wins > 0 else 0.0
+        avg_loss = (loss_pnl / losses) if losses > 0 else 0.0
 
         return {
             "total": total,
@@ -192,5 +218,7 @@ class TradeJournal:
             "losses": losses,
             "win_rate": round((wins / total) * 100.0, 1),
             "profit_factor": round(pf, 2),
-            "net_pnl": round(net_pnl, 2)
+            "net_pnl": round(net_pnl, 2),
+            "avg_win_usd": round(avg_win, 2),
+            "avg_loss_usd": round(avg_loss, 2)
         }

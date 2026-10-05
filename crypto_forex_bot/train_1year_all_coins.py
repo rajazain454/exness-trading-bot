@@ -79,18 +79,18 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     Includes all 6 quant features: CHOP, Z-Score, VWAP, ATR Percentiles, EV, and Multi-Timeframe EMA.
     """
     # M5 Indicators
-    close = df_m5['close'].values
-    high = df_m5['high'].values
-    low = df_m5['low'].values
-    open_p = df_m5['open'].values
-    vol = df_m5['tick_volume'].values
-    times = df_m5['time'].values
+    close = df_m5['close'].to_numpy()
+    high = df_m5['high'].to_numpy()
+    low = df_m5['low'].to_numpy()
+    open_p = df_m5['open'].to_numpy()
+    vol = df_m5['tick_volume'].to_numpy()
+    times = df_m5['time'].to_numpy()
 
     # EMAs
     s_close = pd.Series(close)
-    ema_fast = s_close.ewm(span=9, adjust=False).mean().values
-    ema_slow = s_close.ewm(span=21, adjust=False).mean().values
-    ema_trend = s_close.ewm(span=50, adjust=False).mean().values
+    ema_fast = s_close.ewm(span=9, adjust=False).mean().to_numpy()
+    ema_slow = s_close.ewm(span=21, adjust=False).mean().to_numpy()
+    ema_trend = s_close.ewm(span=50, adjust=False).mean().to_numpy()
 
     # RSI 14
     delta = s_close.diff()
@@ -99,7 +99,7 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
     rs = avg_gain / (avg_loss + 1e-9)
-    rsi = (100.0 - (100.0 / (1.0 + rs))).values
+    rsi = (100.0 - (100.0 / (1.0 + rs))).to_numpy()
 
     # ATR 14
     tr1 = high - low
@@ -107,24 +107,24 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     tr3 = np.abs(low - np.roll(close, 1))
     tr = np.maximum(tr1, np.maximum(tr2, tr3))
     tr[0] = tr1[0]
-    atr = pd.Series(tr).rolling(14).mean().bfill().values
+    atr = pd.Series(tr).rolling(14).mean().bfill().to_numpy()
 
     # ATR Percentiles (Vectorized 100-bar rolling)
     s_atr = pd.Series(atr)
     atr_min = s_atr.rolling(100).min()
     atr_max = s_atr.rolling(100).max()
-    atr_pct = (((s_atr - atr_min) / (atr_max - atr_min + 1e-9)) * 100.0).fillna(50.0).values
+    atr_pct = (((s_atr - atr_min) / (atr_max - atr_min + 1e-9)) * 100.0).fillna(50.0).to_numpy()
 
     # Z-Score 50
     mean_50 = s_close.rolling(50).mean()
     std_50 = s_close.rolling(50).std()
-    z_score = (((s_close - mean_50) / (std_50 + 1e-9))).fillna(0.0).values
+    z_score = (((s_close - mean_50) / (std_50 + 1e-9))).fillna(0.0).to_numpy()
 
     # Choppiness Index 14
     s_tr = pd.Series(tr)
-    atr_sum = s_tr.rolling(14).sum().values
-    high_max = pd.Series(high).rolling(14).max().values
-    low_min = pd.Series(low).rolling(14).min().values
+    atr_sum = s_tr.rolling(14).sum().to_numpy()
+    high_max = pd.Series(high).rolling(14).max().to_numpy()
+    low_min = pd.Series(low).rolling(14).min().to_numpy()
     price_range = (high_max - low_min) + 1e-9
     safe_ratio = np.where(atr_sum > 1e-9, atr_sum / price_range, 14.0 ** 0.5)
     safe_ratio = np.maximum(safe_ratio, 1e-9)
@@ -135,14 +135,14 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     typical = (high + low + close) / 3.0
     dates = df_m5['datetime'].dt.date
     pv = typical * vol
-    cum_pv = pd.Series(pv).groupby(dates).cumsum().values
-    cum_v = pd.Series(vol).groupby(dates).cumsum().values + 1e-9
+    cum_pv = pd.Series(pv).groupby(dates).cumsum().to_numpy()
+    cum_v = pd.Series(vol).groupby(dates).cumsum().to_numpy() + 1e-9
     vwap = cum_pv / cum_v
 
     # Hours in UTC for session filter
     datetimes = df_m5['datetime'].dt
-    hours = datetimes.hour.values
-    minutes = datetimes.minute.values
+    hours = datetimes.hour.to_numpy()
+    minutes = datetimes.minute.to_numpy()
 
     m5_data = {
         'times': times,
@@ -164,12 +164,12 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     }
 
     # H1 Indicators
-    h1_close = df_h1['close'].values
+    h1_close = df_h1['close'].to_numpy()
     s_h1 = pd.Series(h1_close)
-    h1_fast = s_h1.ewm(span=9, adjust=False).mean().values
-    h1_slow = s_h1.ewm(span=21, adjust=False).mean().values
-    h1_50 = s_h1.ewm(span=50, adjust=False).mean().values
-    h1_times = df_h1['time'].values
+    h1_fast = s_h1.ewm(span=9, adjust=False).mean().to_numpy()
+    h1_slow = s_h1.ewm(span=21, adjust=False).mean().to_numpy()
+    h1_50 = s_h1.ewm(span=50, adjust=False).mean().to_numpy()
+    h1_times = df_h1['time'].to_numpy()
 
     h1_data = {
         'times': h1_times,
