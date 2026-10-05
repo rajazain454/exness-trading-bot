@@ -112,9 +112,43 @@ class GoldScalperStrategy:
             return "BEARISH"
         return "NEUTRAL"
 
-    def analyze(self, m5_rates: List[Dict[str, Any]], h1_rates: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def analyze_m1_microstructure(self, m1_rates: Optional[Any] = None) -> Dict[str, Any]:
         """
-        Executes institutional scalping analysis on Gold.
+        Analyzes the latest M1 micro-candles to confirm reversal execution timing.
+        Ensures the bot does not sell into an active green candle surge or buy into a falling knife.
+        """
+        if m1_rates is None or len(m1_rates) < 2:
+            return {"bullish_confirmed": True, "bearish_confirmed": True, "reason": "M1 data omitted (default pass)"}
+
+        df_m1 = pd.DataFrame(m1_rates)
+        curr = df_m1.iloc[-1]
+
+        c = curr["close"]
+        o = curr["open"]
+        h = curr["high"]
+        l = curr["low"]
+        rng = h - l + 1e-9
+
+        lower_wick = (min(o, c) - l) / rng
+        upper_wick = (h - max(o, c)) / rng
+
+        # Bullish M1 Reversal Confirmation:
+        # Candle is green (close > open) OR has significant lower wick absorption (>= 25%)
+        bullish = bool((c > o) or (lower_wick >= 0.25))
+
+        # Bearish M1 Reversal Confirmation:
+        # Candle is red (close < open) OR has significant upper wick rejection (>= 25%)
+        bearish = bool((c < o) or (upper_wick >= 0.25))
+
+        return {
+            "bullish_confirmed": bullish,
+            "bearish_confirmed": bearish,
+            "reason": f"M1: Bull={bullish} (c={c:.2f}, o={o:.2f}, low_wick={lower_wick*100:.0f}%), Bear={bearish} (upper_wick={upper_wick*100:.0f}%)"
+        }
+
+    def analyze(self, m5_rates: List[Dict[str, Any]], h1_rates: Optional[List[Dict[str, Any]]] = None, m1_rates: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+        """
+        Executes institutional scalping analysis on Gold with M1 microstructure confirmation.
         """
         df = self.calculate_indicators(m5_rates)
         if df.empty or len(df) < self.ema_trend + 5:
@@ -238,6 +272,16 @@ class GoldScalperStrategy:
                     "metrics": metrics
                 }
 
+            # M1 Microstructure Reversal Timing Guard
+            m1_state = self.analyze_m1_microstructure(m1_rates)
+            if not m1_state.get("bullish_confirmed", True):
+                return {
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "reason": f"M1 Micro Guard: Waiting for M1 bullish reversal candle ({m1_state.get('reason', '')}).",
+                    "metrics": metrics
+                }
+
             # Score confluence
             score = 70
             if h1_trend == "BULLISH": score += 10
@@ -248,7 +292,7 @@ class GoldScalperStrategy:
             return {
                 "signal": "BUY",
                 "confidence": round(min(score, 100) / 100.0, 4),
-                "reason": f"Gold Scalp BUY: H1={h1_trend}, M5 Bullish, EMA 9/21 pullback bounced, CHOP={chop_val:.1f}, Wick={lower_wick_ratio*100:.0f}%.",
+                "reason": f"Gold Scalp BUY: H1={h1_trend}, M5 Bullish, EMA 9/21 pullback bounced, M1 Confirmed, CHOP={chop_val:.1f}.",
                 "metrics": metrics
             }
 
@@ -269,6 +313,16 @@ class GoldScalperStrategy:
                     "metrics": metrics
                 }
 
+            # M1 Microstructure Reversal Timing Guard
+            m1_state = self.analyze_m1_microstructure(m1_rates)
+            if not m1_state.get("bearish_confirmed", True):
+                return {
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "reason": f"M1 Micro Guard: Waiting for M1 bearish reversal candle ({m1_state.get('reason', '')}).",
+                    "metrics": metrics
+                }
+
             score = 70
             if h1_trend == "BEARISH": score += 10
             if chop_val <= 45.0: score += 10
@@ -278,7 +332,7 @@ class GoldScalperStrategy:
             return {
                 "signal": "SELL",
                 "confidence": round(min(score, 100) / 100.0, 4),
-                "reason": f"Gold Scalp SELL: H1={h1_trend}, M5 Bearish, EMA 9/21 rally rejected, CHOP={chop_val:.1f}, Wick={upper_wick_ratio*100:.0f}%.",
+                "reason": f"Gold Scalp SELL: H1={h1_trend}, M5 Bearish, EMA 9/21 rally rejected, M1 Confirmed, CHOP={chop_val:.1f}.",
                 "metrics": metrics
             }
 

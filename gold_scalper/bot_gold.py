@@ -61,6 +61,7 @@ class GoldScalperBot:
         self.known_positions = {}
         self.trailing_sl = {}
         self.last_trail_price = {}
+        self.last_exit_m5_bar_time = 0
 
     def log(self, message: str, level: str = "INFO"):
         """Logs event with timestamp."""
@@ -109,7 +110,7 @@ class GoldScalperBot:
             return []
         return [p for p in all_pos if p.magic == self.magic]
 
-    def manage_gold_positions(self, atr_val: float):
+    def manage_gold_positions(self, atr_val: float, current_m5_bar_time: int = 0):
         """Manages Closed Trade Detection, Partial TP, Break-Even, and Dynamic ATR Trailing Stop."""
         active_positions = self.get_gold_positions()
         active_tickets = {p.ticket for p in active_positions}
@@ -121,6 +122,9 @@ class GoldScalperBot:
             self.active_be_locked.discard(t)
             self.trailing_sl.pop(t, None)
             self.last_trail_price.pop(t, None)
+
+            if current_m5_bar_time > 0:
+                self.last_exit_m5_bar_time = current_m5_bar_time
 
             deals = mt5.history_deals_get(position=t)
             pnl = 0.0
@@ -446,7 +450,7 @@ class GoldScalperBot:
             err = res.comment if res else str(mt5.last_error())
             self.log(f"Execution failed on Gold: {err}", "ERROR")
 
-    def build_dashboard(self, analysis: dict, active_positions: list) -> Layout:
+    def build_dashboard(self, analysis: dict, active_positions: list, cooldown_active: bool = False, bars_remaining: float = 0.0) -> Layout:
         """Renders live terminal dashboard for Gold Scalper."""
         layout = Layout()
         layout.split_column(
@@ -459,13 +463,13 @@ class GoldScalperBot:
         acc = mt5.account_info()
         now_utc = datetime.now(timezone.utc)
         hour = now_utc.hour
-        session_active = (7 <= hour < 18)
+        session_active = (config_gold.SESSION_START_HOUR_UTC <= hour < config_gold.SESSION_END_HOUR_UTC)
 
         # Header
         h_text = Text()
         h_text.append("[INSTITUTIONAL GOLD (XAUUSDm) SCALPER ENGINE]", style="bold gold1")
         h_text.append(f"  |  Account: {acc.login if acc else 'N/A'}", style="bold yellow")
-        h_text.append(f"  |  Session: {'🟢 ACTIVE (London/NY)' if session_active else '🔴 OFF-HOURS (Asian)'}", style="bold green" if session_active else "bold red")
+        h_text.append(f"  |  Session: {'🟢 ACTIVE (London/NY)' if session_active else '🔴 OFF-HOURS (Asian/Late)'}", style="bold green" if session_active else "bold red")
         h_text.append(f"  |  UTC: {now_utc.strftime('%H:%M:%S')}", style="bold white")
         layout["header"].update(Panel(h_text, style="gold1"))
 
@@ -517,7 +521,9 @@ class GoldScalperBot:
         m_table.add_row("Spread", f"{spread_pts:.0f} pts (${spread_pts*0.001:.2f})")
         m_table.add_row("M5 / H1 Trend", f"{metrics.get('close', 0.0)} | H1: [bold]{metrics.get('h1_trend', 'N/A')}[/bold]")
         m_table.add_row("CHOP / ADX", f"CHOP: {metrics.get('chop', 0.0):.1f} | ADX: {metrics.get('adx', 0.0):.1f}")
-        m_table.add_row("M5 ATR Volatility", f"${metrics.get('atr', 0.0):.2f}")
+        cd_display = "[bold green]READY[/bold green]" if not cooldown_active else f"[bold yellow]WAITING ({bars_remaining:.0f} M5 Bar)[/bold yellow]"
+        m_table.add_row("Exit Cooldown", cd_display)
+        m_table.add_row("M1 Micro Guard", "[bold green]ACTIVE (Turn Confirmed)[/bold green]")
         m_table.add_row("Scalp Signal", f"[{'bold green' if sig == 'BUY' else ('bold red' if sig == 'SELL' else 'bold yellow')}]{sig}[/] ({conf*100:.0f}%)")
         layout["market_box"].update(Panel(m_table, title="[bold]Gold Scalper Edge & Confluence[/bold]", border_style="gold1"))
 
@@ -553,31 +559,48 @@ class GoldScalperBot:
             return
 
         self.running = True
-        self.log(f"Gold Scalper live. Monitoring XAUUSDm on M5 with H1 confirmation...", "SUCCESS")
+        self.log(f"Gold Scalper live. Monitoring XAUUSDm on M5 with M1/H1 confirmation...", "SUCCESS")
 
         try:
             with Live(console=console, refresh_per_second=2, screen=False) as live:
                 while self.running:
-                    # 1. Fetch data
+                    # 1. Fetch data: M5 primary, H1 macro, M1 micro-structure
                     m5_rates = self.connector.get_rates(self.symbol, config_gold.TIMEFRAME, count=100)
                     h1_rates = self.connector.get_rates(self.symbol, config_gold.HIGHER_TIMEFRAME, count=50)
+                    m1_rates = self.connector.get_rates(self.symbol, config_gold.SCALP_TIMEFRAME, count=30)
 
-                    # 2. Run analysis
-                    analysis = self.strategy.analyze(m5_rates, h1_rates)
+                    current_m5_bar_time = m5_rates[-1]["time"] if m5_rates is not None and len(m5_rates) > 0 else 0
+
+                    # 2. Run analysis with M1 confirmation
+                    analysis = self.strategy.analyze(m5_rates, h1_rates, m1_rates)
                     sig = analysis.get("signal", "HOLD")
                     metrics = analysis.get("metrics", {})
                     atr_val = metrics.get("atr", 2.50)
 
-                    # 3. Active position management (Partial TP & BE)
-                    self.manage_gold_positions(atr_val)
+                    # 3. Active position management (Partial TP, BE, Trailing Stop, Exit Logging)
+                    self.manage_gold_positions(atr_val, current_m5_bar_time)
                     active_positions = self.get_gold_positions()
 
-                    # 4. Execute if valid signal and no active trades
-                    if sig in ["BUY", "SELL"] and len(active_positions) < config_gold.MAX_OPEN_POSITIONS:
-                        self.execute_scalp(sig, atr_val)
+                    # 4. Check 1 Full New M5 Bar Cooldown
+                    cooldown_active = False
+                    bars_remaining = 0.0
+                    cooldown_bars = getattr(config_gold, "BAR_COOLDOWN_M5_COUNT", 1)
+                    if self.last_exit_m5_bar_time > 0 and current_m5_bar_time > 0:
+                        bars_elapsed = (current_m5_bar_time - self.last_exit_m5_bar_time) / 300.0
+                        needed = (cooldown_bars + 1)
+                        if bars_elapsed < needed:
+                            cooldown_active = True
+                            bars_remaining = needed - bars_elapsed
 
-                    # 5. Render dashboard
-                    dashboard = self.build_dashboard(analysis, active_positions)
+                    # 5. Execute if valid signal, no active trades, and cooldown has passed
+                    if sig in ["BUY", "SELL"] and len(active_positions) < config_gold.MAX_OPEN_POSITIONS:
+                        if not cooldown_active:
+                            self.execute_scalp(sig, atr_val)
+                        else:
+                            self.log("⏸️ Cooldown Guard: Waiting for 1 full new completed M5 candle after exit.", "INFO")
+
+                    # 6. Render dashboard
+                    dashboard = self.build_dashboard(analysis, active_positions, cooldown_active, bars_remaining)
                     live.update(dashboard)
 
                     time.sleep(3)

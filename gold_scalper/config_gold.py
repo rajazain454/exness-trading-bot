@@ -39,8 +39,8 @@ EMA_TREND = 50               # 50-period Trend Baseline
 # SESSION TRADING HOURS (UTC)
 # ==========================================
 # Gold institutional volume is concentrated in London & New York
-SESSION_START_HOUR_UTC = 7   # 07:00 UTC (London Open)
-SESSION_END_HOUR_UTC = 18    # 18:00 UTC (London Close / NY Afternoon)
+SESSION_START_HOUR_UTC = 8   # 08:00 UTC (London Open)
+SESSION_END_HOUR_UTC = 16    # 16:00 UTC (London Close - avoid low-liquidity late whipsaws)
 AVOID_ASIAN_SESSION = True   # Avoid 22:00 - 06:00 UTC low-liquidity chop
 
 # ==========================================
@@ -50,11 +50,12 @@ RISK_PER_TRADE_PERCENT = 0.50 # Risk 0.50% equity per scalp (suitable for $25 - 
 MAX_OPEN_POSITIONS = 1       # Strict 1 position max at any time
 MAX_DAILY_LOSS_USD = 5.00    # Hard equity stop on a small account ($5.00)
 MAX_DAILY_TRADES = 6         # Cap daily scalps to prevent overtrading
+BAR_COOLDOWN_M5_COUNT = 1    # Cooldown: Require at least 1 full new completed M5 candle after any trade exit
 
 # Dynamic ATR Stop Loss & Take Profit for Gold
 ATR_PERIOD = 14
-ATR_SL_MULTIPLIER = 1.3      # Stop Loss = 1.3 x ATR (~$2.00 - $3.50 on Gold)
-ATR_TP_MULTIPLIER = 2.0      # Take Profit = 2.0 x SL (~$4.00 - $7.00 on Gold, 1:2 RR)
+ATR_SL_MULTIPLIER = 0.9      # Stop Loss = 0.9 x ATR (~$2.20 - $2.80 on Gold for micro accounts)
+ATR_TP_MULTIPLIER = 2.0      # Take Profit = 2.0 x SL (~$4.40 - $5.60 on Gold, 1:2 RR)
 
 # Smart Partial Take-Profit & Break-Even
 USE_PARTIAL_TP = True
