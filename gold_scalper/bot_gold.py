@@ -23,15 +23,20 @@ from rich.live import Live
 from rich.text import Text
 import MetaTrader5 as mt5
 
-# Add parent and crypto_forex_bot directories to path
+# Add parent, crypto_forex_bot, and gold_scalper directories to path
 PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CRYPTO_DIR = os.path.join(PARENT_DIR, "crypto_forex_bot")
-for d in [PARENT_DIR, CRYPTO_DIR]:
+GOLD_DIR = os.path.dirname(os.path.abspath(__file__))
+for d in [PARENT_DIR, CRYPTO_DIR, GOLD_DIR]:
     if d not in sys.path:
-        sys.path.append(d)
+        sys.path.insert(0, d)
 
-from gold_scalper import config_gold
-from gold_scalper.strategy_gold import GoldScalperStrategy
+try:
+    from gold_scalper import config_gold
+    from gold_scalper.strategy_gold import GoldScalperStrategy
+except ImportError:
+    import config_gold
+    from strategy_gold import GoldScalperStrategy
 
 from crypto_forex_bot.mt5_connector import MT5Connector
 from crypto_forex_bot.notifier import DiscordNotifier
@@ -233,8 +238,20 @@ class GoldScalperBot:
         res = mt5.order_send(req)
         if res and res.retcode == mt5.TRADE_RETCODE_DONE:
             self.log(f"⚡ EXECUTED {sig} on Gold #{res.order} | Lots: {lots:.2f} @ {entry:.2f} | SL: {sl:.2f} | TP: {tp:.2f}", "TRADE")
-            if self.notifier.enabled:
-                self.notifier.send(f"⚡ [XAUUSDm] {sig} Scalp Executed #{res.order}\nLots: {lots:.2f} @ {entry:.2f} | SL: {sl:.2f} | TP: {tp:.2f}")
+            try:
+                if self.notifier.enabled:
+                    self.notifier.notify_trade_opened(
+                        symbol=self.symbol,
+                        signal=sig,
+                        ticket=res.order,
+                        entry=entry,
+                        sl=sl,
+                        tp=tp,
+                        lot=lots,
+                        balance=equity
+                    )
+            except Exception as notify_err:
+                self.log(f"Discord notify error: {notify_err}", "WARN")
         else:
             err = res.comment if res else str(mt5.last_error())
             self.log(f"Execution failed on Gold: {err}", "ERROR")

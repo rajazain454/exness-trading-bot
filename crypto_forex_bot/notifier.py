@@ -37,6 +37,14 @@ class DiscordNotifier:
             except queue.Empty:
                 continue
 
+    def send(self, message: str) -> bool:
+        """Sends a text message or alert embed to Discord."""
+        return self.send_embed(
+            title="Trading Engine Alert",
+            description=message,
+            color=0xF1C40F
+        )
+
     def send_embed(self, title: str, description: str, color: int, fields: Optional[list] = None) -> bool:
         """Enqueues a rich Discord embed asynchronously without blocking the trading loop."""
         if not self.enabled:
