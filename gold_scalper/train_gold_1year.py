@@ -82,7 +82,10 @@ def run_gold_simulation(df: pd.DataFrame, chop_max: float, z_limit: float, sl_mu
     h_max = s_high.rolling(14).max().values
     l_min = s_low.rolling(14).min().values
     price_rng = (h_max - l_min) + 1e-9
-    chop = 100.0 * np.log10(atr_sum / price_rng) / np.log10(14)
+    safe_ratio = np.where(atr_sum > 1e-9, atr_sum / price_rng, 14.0 ** 0.5)
+    safe_ratio = np.maximum(safe_ratio, 1e-9)
+    chop = 100.0 * np.log10(safe_ratio) / np.log10(14)
+    chop = np.nan_to_num(chop, nan=50.0, posinf=50.0, neginf=50.0)
 
     # Z-Score 50
     m50 = s_close.rolling(50).mean().values

@@ -64,6 +64,7 @@ BREAK_EVEN_BUFFER_PIPS = 2.0 # Move SL to Entry + $0.20 when TP1 is banked
 # Trailing Stop
 ENABLE_TRAILING_STOP = True
 TRAILING_ATR_MULT = 1.2      # Trailing distance = 1.2x ATR once in profit
+TRAILING_STEP_USD = 0.25     # Ratchet step: minimum $0.25 advance before updating SL
 
 # ==========================================
 # FILTERS & SAFETY GUARDS

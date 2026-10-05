@@ -126,8 +126,10 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     high_max = pd.Series(high).rolling(14).max().values
     low_min = pd.Series(low).rolling(14).min().values
     price_range = (high_max - low_min) + 1e-9
-    chop = 100.0 * np.log10(atr_sum / price_range) / np.log10(14)
-    chop = np.nan_to_num(chop, nan=50.0)
+    safe_ratio = np.where(atr_sum > 1e-9, atr_sum / price_range, 14.0 ** 0.5)
+    safe_ratio = np.maximum(safe_ratio, 1e-9)
+    chop = 100.0 * np.log10(safe_ratio) / np.log10(14)
+    chop = np.nan_to_num(chop, nan=50.0, posinf=50.0, neginf=50.0)
 
     # Daily-Anchored Session VWAP (resets at 00:00 UTC)
     typical = (high + low + close) / 3.0
