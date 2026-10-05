@@ -74,10 +74,11 @@ def main():
         console.print("[2] [bold blue]Run 6-Factor Quant Backtest[/bold blue] (Benchmark vs Quant Comparison)")
         console.print("[3] [bold yellow]Inspect Exness Account & Market Status[/bold yellow]")
         console.print("[4] [bold magenta]View SQLite Trade Journal & Analytics[/bold magenta]")
-        console.print("[5] [bold cyan]Run Hard Test & Train Bot[/bold cyan] (Full verification & parameter training)")
-        console.print("[6] [bold red]Exit[/bold red]")
+        console.print("[5] [bold cyan]Run Extreme Stress Test Suite[/bold cyan] (5-tier math, broker checks, and gatekeeper diagnostics)")
+        console.print("[6] [bold white]Train / Refresh 1-Year Coin Models[/bold white] (100k bars vectorized parameter optimization)")
+        console.print("[7] [bold red]Exit[/bold red]")
 
-        choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "5", "6"], default="1")
+        choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "5", "6", "7"], default="1")
 
         if choice == "1":
             from bot import ExnessTradingBot
@@ -95,12 +96,18 @@ def main():
         elif choice == "4":
             view_journal()
         elif choice == "5":
-            from hard_test_and_train import main as run_hard_test
+            from extreme_test import main as run_extreme_test
             try:
-                run_hard_test()
+                run_extreme_test()
             except Exception as e:
-                console.print(f"[red]Hard test error: {e}[/red]")
+                console.print(f"[red]Extreme test error: {e}[/red]")
         elif choice == "6":
+            from train_1year_all_coins import main as run_train_coins
+            try:
+                run_train_coins()
+            except Exception as e:
+                console.print(f"[red]Training error: {e}[/red]")
+        elif choice == "7":
             console.print("[cyan]Exiting Exness Trading Bot. Happy Trading![/cyan]")
             sys.exit(0)
 

@@ -59,22 +59,25 @@ class SmartMoneyConcepts:
         if not levels:
             return True, "Daily levels unavailable"
 
+        is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
         pip_size = self.connector.get_pip_size(symbol)
-        proximity_dist = config.KEY_LEVEL_PROXIMITY_PIPS * pip_size
+        proximity_dist = (current_price * 0.0005) if is_crypto else (config.KEY_LEVEL_PROXIMITY_PIPS * pip_size)
 
         if signal == "BUY":
             # Check proximity to PDH or R1
             for level_name, level_price in [("Previous Day High (PDH)", levels["pdh"]), ("Daily R1", levels["r1"])]:
                 if 0 <= (level_price - current_price) <= proximity_dist:
-                    dist_pips = (level_price - current_price) / pip_size
-                    return False, f"SMC Trap: BUY suppressed directly below {level_name} ({dist_pips:.1f} pips away). Resistance ceiling risk."
+                    dist_units = (level_price - current_price) / (1.0 if is_crypto else pip_size)
+                    unit_label = "$" if is_crypto else "pips"
+                    return False, f"SMC Trap: BUY suppressed directly below {level_name} ({dist_units:.1f} {unit_label} away). Resistance ceiling risk."
 
         elif signal == "SELL":
             # Check proximity to PDL or S1
             for level_name, level_price in [("Previous Day Low (PDL)", levels["pdl"]), ("Daily S1", levels["s1"])]:
                 if 0 <= (current_price - level_price) <= proximity_dist:
-                    dist_pips = (current_price - level_price) / pip_size
-                    return False, f"SMC Trap: SELL suppressed directly above {level_name} ({dist_pips:.1f} pips away). Support floor bounce risk."
+                    dist_units = (current_price - level_price) / (1.0 if is_crypto else pip_size)
+                    unit_label = "$" if is_crypto else "pips"
+                    return False, f"SMC Trap: SELL suppressed directly above {level_name} ({dist_units:.1f} {unit_label} away). Support floor bounce risk."
 
         return True, "Structure clear"
 

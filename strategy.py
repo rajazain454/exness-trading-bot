@@ -27,9 +27,9 @@ class ForexConfluenceStrategy:
     Intraday VWAP Anchor, Dynamic ATR Percentile Sizing, and Expected Value (EV).
     """
 
-    def __init__(self, ema_fast: int = 50, ema_slow: int = 200, rsi_period: int = 14, atr_period: int = 14, adx_period: int = 14):
-        self.ema_fast = ema_fast
-        self.ema_slow = ema_slow
+    def __init__(self, ema_fast: int = 9, ema_slow: int = 21, rsi_period: int = 14, atr_period: int = 14, adx_period: int = 14):
+        self.ema_fast = getattr(config, "EMA_FAST", ema_fast)
+        self.ema_slow = getattr(config, "EMA_SLOW", ema_slow)
         self.rsi_period = rsi_period
         self.atr_period = atr_period
         self.adx_period = adx_period

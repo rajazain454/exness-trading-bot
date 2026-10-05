@@ -92,6 +92,10 @@ class CurrencyStrengthMeter:
         if not config.CSM_FILTER_ENABLED:
             return True, "CSM filter disabled"
 
+        # Crypto assets (BTC, ETH, etc.) are independent of fiat currency strength baskets
+        if any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"]):
+            return True, "Crypto exempt from fiat Currency Strength Meter"
+
         diff, base, quote = self.get_currency_differential(symbol)
         min_diff = config.MIN_CSM_DIFFERENTIAL
 
