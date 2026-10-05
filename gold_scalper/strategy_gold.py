@@ -31,8 +31,10 @@ class GoldScalperStrategy:
         self.adx_min = config_gold.MIN_ADX_THRESHOLD
         self.z_max = config_gold.Z_SCORE_PULLBACK_MAX
 
-    def calculate_indicators(self, rates_data: List[Dict[str, Any]]) -> pd.DataFrame:
+    def calculate_indicators(self, rates_data) -> pd.DataFrame:
         """Calculates moving averages, RSI, ATR, ADX, CHOP, Z-score, and VWAP."""
+        if rates_data is None or len(rates_data) == 0:
+            return pd.DataFrame()
         df = pd.DataFrame(rates_data)
         if df.empty or len(df) < self.ema_trend + 5:
             return df
@@ -95,9 +97,9 @@ class GoldScalperStrategy:
 
         return df
 
-    def analyze_h1_macro(self, h1_rates: Optional[List[Dict[str, Any]]]) -> str:
+    def analyze_h1_macro(self, h1_rates: Optional[Any] = None) -> str:
         """Determines macro trend regime on Gold H1 candles."""
-        if not h1_rates or len(h1_rates) < 21:
+        if h1_rates is None or len(h1_rates) < 21:
             return "NEUTRAL"
         df_h1 = pd.DataFrame(h1_rates)
         close = df_h1["close"]

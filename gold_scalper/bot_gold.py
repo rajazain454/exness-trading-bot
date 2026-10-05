@@ -217,6 +217,19 @@ class GoldScalperBot:
             "type_filling": mt5.ORDER_FILLING_IOC
         }
 
+        # Pre-flight Margin Verification
+        req_margin = mt5.order_calc_margin(req["type"], self.symbol, lots, entry)
+        free_margin = acc.margin_free if acc else 0.0
+        if req_margin and req_margin > free_margin:
+            shortfall = req_margin - free_margin
+            self.log(
+                f"❌ Margin Shortfall: {lots} lot Gold requires ${req_margin:.2f} margin "
+                f"(Free: ${free_margin:.2f}, Leverage 1:{acc.leverage if acc else 50}). "
+                f"Shortfall: ${shortfall:.2f}. Increase Exness account leverage to 1:200+ in Personal Area.",
+                "WARN"
+            )
+            return
+
         res = mt5.order_send(req)
         if res and res.retcode == mt5.TRADE_RETCODE_DONE:
             self.log(f"⚡ EXECUTED {sig} on Gold #{res.order} | Lots: {lots:.2f} @ {entry:.2f} | SL: {sl:.2f} | TP: {tp:.2f}", "TRADE")
@@ -263,6 +276,12 @@ class GoldScalperBot:
         floating = (acc.equity - acc.balance) if acc else 0.0
         acc_table.add_row("Floating P&L", f"[{'bold green' if floating >= 0 else 'bold red'}]${floating:+.2f}[/]")
         acc_table.add_row("Free Margin", f"${acc.margin_free:.2f}" if acc else "N/A")
+        tick_tmp = mt5.symbol_info_tick(self.symbol)
+        needed_margin = (mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, self.symbol, 0.01, tick_tmp.ask) if tick_tmp else 82.0) or 82.0
+        if acc and acc.margin_free < needed_margin:
+            acc_table.add_row("0.01 Lot Margin", f"[bold red]${needed_margin:.2f} (SHORT ${needed_margin - acc.margin_free:.2f})[/bold red]")
+        else:
+            acc_table.add_row("0.01 Lot Margin", f"[bold green]${needed_margin:.2f} (Ready)[/bold green]")
         acc_table.add_row("Active Scalper Target", "[bold cyan]1.0x ATR (Partial) / 2.0x ATR (Full)[/bold cyan]")
         layout["account_box"].update(Panel(acc_table, title="[bold]Financial Health[/bold]", border_style="blue"))
 
