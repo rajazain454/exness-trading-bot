@@ -174,6 +174,9 @@ class RiskManager:
         calculated_lot = round(max(config.BASE_LOT_SIZE, multiplier * config.BASE_LOT_SIZE), 2)
         return min(calculated_lot, config.MAX_LOT_SIZE)
 
+    # Backward compatibility alias
+    calculate_compounding_lot = calculate_lot_size
+
     def can_open_trade(self, symbol: str, active_positions_count: int) -> Tuple[bool, str]:
         """
         Comprehensive pre-trade gatekeeper.

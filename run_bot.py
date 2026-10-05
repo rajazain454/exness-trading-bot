@@ -65,7 +65,7 @@ def main():
     while True:
         console.print("\n")
         console.print(Panel.fit(
-            "[bold cyan]★ EXNESS INSTITUTIONAL TRADING SUITE ★[/bold cyan]\n"
+            "[bold cyan]EXNESS INSTITUTIONAL TRADING SUITE[/bold cyan]\n"
             "[white]Designed for $30 capital, 1:50 leverage, multi-pair basket scanning, & ADX filtering[/white]",
             border_style="cyan"
         ))

@@ -40,8 +40,8 @@ class ExnessTradingBot:
         self.basket_symbols = []
         self.running = False
         self.logs = []
-        self.start_time = datetime.utcnow()
-        self.last_heartbeat_time = datetime.utcnow()
+        self.start_time = datetime.now(timezone.utc)
+        self.last_heartbeat_time = datetime.now(timezone.utc)
         self.daily_report_date = None
 
     def log(self, message: str, level: str = "INFO"):
@@ -84,7 +84,7 @@ class ExnessTradingBot:
 
     def check_heartbeat(self):
         """Dispatches operational heartbeat to Discord periodically."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         interval = timedelta(minutes=config.HEARTBEAT_INTERVAL_MINUTES)
         if (now - self.last_heartbeat_time) >= interval:
             acc = self.connector.get_account_summary()
@@ -128,7 +128,7 @@ class ExnessTradingBot:
 
         # 1. Header
         header_text = Text()
-        header_text.append("★ EXNESS INSTITUTIONAL SMC ALGORITHMIC SUITE ★", style="bold cyan")
+        header_text.append("[EXNESS INSTITUTIONAL SMC ALGORITHMIC SUITE]", style="bold cyan")
         header_text.append(f"  |  Account: {acc.get('login', 'N/A')} ({acc.get('server', 'N/A')})", style="bold yellow")
         header_text.append(f"  |  Execution: {config.ENTRY_ORDER_TYPE}", style="bold green")
         header_text.append(f"  |  UTC: {now_utc.strftime('%H:%M:%S')}", style="bold white")
@@ -146,7 +146,7 @@ class ExnessTradingBot:
         free_margin = acc.get("free_margin", 0.0)
         floating_pnl = equity - balance
         pnl_style = "bold green" if floating_pnl >= 0 else "bold red"
-        compounded_lot = self.risk_manager.calculate_compounding_lot(equity) if self.risk_manager else 0.01
+        compounded_lot = self.risk_manager.calculate_lot_size(equity) if self.risk_manager else 0.01
 
         stats = self.order_manager.journal.get_today_summary() if self.order_manager else {}
         today_pnl = stats.get("net_pnl", 0.0)
@@ -333,6 +333,9 @@ class ExnessTradingBot:
         except KeyboardInterrupt:
             self.log("Shutdown requested by user (Ctrl+C).", "INFO")
         except Exception as e:
+            import traceback
+            console.print(f"[bold red]Runtime error in bot:[/bold red]")
+            traceback.print_exc()
             self.log(f"Runtime error: {str(e)}", "ERROR")
         finally:
             self.stop()
