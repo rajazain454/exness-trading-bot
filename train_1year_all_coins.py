@@ -12,11 +12,19 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
+# Ensure UTF-8 output on Windows terminals
+if sys.platform.startswith("win"):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 import MetaTrader5 as mt5
 import config
 from quant_engine import QuantitativeEngine
 
-console = Console()
+console = Console(force_terminal=True, legacy_windows=False)
 
 ALL_COINS_AND_PAIRS = [
     # Crypto Coins
@@ -82,6 +90,7 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     s_close = pd.Series(close)
     ema_fast = s_close.ewm(span=9, adjust=False).mean().values
     ema_slow = s_close.ewm(span=21, adjust=False).mean().values
+    ema_trend = s_close.ewm(span=50, adjust=False).mean().values
 
     # RSI 14
     delta = s_close.diff()
@@ -120,10 +129,12 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     chop = 100.0 * np.log10(atr_sum / price_range) / np.log10(14)
     chop = np.nan_to_num(chop, nan=50.0)
 
-    # Intraday Cumulative VWAP
+    # Daily-Anchored Session VWAP (resets at 00:00 UTC)
     typical = (high + low + close) / 3.0
-    cum_pv = np.cumsum(typical * vol)
-    cum_v = np.cumsum(vol) + 1e-9
+    dates = df_m5['datetime'].dt.date
+    pv = typical * vol
+    cum_pv = pd.Series(pv).groupby(dates).cumsum().values
+    cum_v = pd.Series(vol).groupby(dates).cumsum().values + 1e-9
     vwap = cum_pv / cum_v
 
     # Hours in UTC for session filter
@@ -139,6 +150,7 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
         'close': close,
         'ema_fast': ema_fast,
         'ema_slow': ema_slow,
+        'ema_trend': ema_trend,
         'rsi': rsi,
         'atr': atr,
         'atr_pct': atr_pct,
@@ -154,13 +166,15 @@ def precompute_indicators(df_m5: pd.DataFrame, df_h1: pd.DataFrame) -> Tuple[Dic
     s_h1 = pd.Series(h1_close)
     h1_fast = s_h1.ewm(span=9, adjust=False).mean().values
     h1_slow = s_h1.ewm(span=21, adjust=False).mean().values
+    h1_50 = s_h1.ewm(span=50, adjust=False).mean().values
     h1_times = df_h1['time'].values
 
     h1_data = {
         'times': h1_times,
         'close': h1_close,
         'fast': h1_fast,
-        'slow': h1_slow
+        'slow': h1_slow,
+        'ema_50': h1_50
     }
 
     return m5_data, h1_data
@@ -207,9 +221,8 @@ def simulate_pure_r(
 
     n_bars = len(close)
     trades: List[Dict[str, Any]] = []
-    
-    active_trade = None # (type, entry, sl, tp, be_dist, be_locked, risk_dist, target_r)
-    
+    active_trade = None # (type, entry, sl, tp, be_trigger, be_offset, be_locked, partial_closed, risk_dist, target_r)
+
     cumulative_r = 0.0
     peak_r = 0.0
     max_dd_r = 0.0
@@ -223,33 +236,57 @@ def simulate_pure_r(
 
         # 1. Manage active trade
         if active_trade is not None:
-            t_type, entry, sl, tp, be_trigger, be_offset, be_locked, risk_dist, target_r = active_trade
-
-            # Break-even check
-            if not be_locked:
-                if t_type == 1 and (c_bar_high - entry) >= be_trigger:
-                    sl = entry + be_offset
-                    be_locked = True
-                    active_trade = (t_type, entry, sl, tp, be_trigger, be_offset, be_locked, risk_dist, target_r)
-                elif t_type == -1 and (entry - c_bar_low) >= be_trigger:
-                    sl = entry - be_offset
-                    be_locked = True
-                    active_trade = (t_type, entry, sl, tp, be_trigger, be_offset, be_locked, risk_dist, target_r)
+            t_type, entry, sl, tp, be_trigger, be_offset, be_locked, partial_closed, risk_dist, target_r = active_trade
 
             outcome_r = None
 
             if t_type == 1: # BUY
-                if c_bar_low <= sl:
-                    # Stopped out
-                    outcome_r = +0.1 if sl > entry else -1.0
-                elif c_bar_high >= tp:
-                    outcome_r = target_r
+                # Partial TP1 scale-out (+1.0R risk distance)
+                if not partial_closed and (c_bar_high - entry) >= risk_dist:
+                    partial_closed = True
+                    be_locked = True
+                    sl = entry + be_offset
+                    cumulative_r += 0.50  # Bank 50% volume at +1.0R (+0.50R net)
+                    active_trade = (t_type, entry, sl, tp, be_trigger, be_offset, be_locked, partial_closed, risk_dist, target_r)
+
+                elif not be_locked and (c_bar_high - entry) >= be_trigger:
+                    sl = entry + be_offset
+                    be_locked = True
+                    active_trade = (t_type, entry, sl, tp, be_trigger, be_offset, be_locked, partial_closed, risk_dist, target_r)
+
+                if c_bar_high >= tp:
+                    outcome_r = (target_r * 0.5) if partial_closed else target_r
+                elif c_bar_low <= sl:
+                    if partial_closed:
+                        outcome_r = 0.05 # Remaining half stopped at BE
+                    elif be_locked:
+                        outcome_r = 0.10
+                    else:
+                        outcome_r = -1.0
+
             else: # SELL
-                if c_bar_high >= sl:
-                    # Stopped out
-                    outcome_r = +0.1 if sl < entry else -1.0
-                elif c_bar_low <= tp:
-                    outcome_r = target_r
+                # Partial TP1 scale-out
+                if not partial_closed and (entry - c_bar_low) >= risk_dist:
+                    partial_closed = True
+                    be_locked = True
+                    sl = entry - be_offset
+                    cumulative_r += 0.50
+                    active_trade = (t_type, entry, sl, tp, be_trigger, be_offset, be_locked, partial_closed, risk_dist, target_r)
+
+                elif not be_locked and (entry - c_bar_low) >= be_trigger:
+                    sl = entry - be_offset
+                    be_locked = True
+                    active_trade = (t_type, entry, sl, tp, be_trigger, be_offset, be_locked, partial_closed, risk_dist, target_r)
+
+                if c_bar_low <= tp:
+                    outcome_r = (target_r * 0.5) if partial_closed else target_r
+                elif c_bar_high >= sl:
+                    if partial_closed:
+                        outcome_r = 0.05
+                    elif be_locked:
+                        outcome_r = 0.10
+                    else:
+                        outcome_r = -1.0
 
             if outcome_r is not None:
                 cumulative_r += outcome_r
@@ -259,12 +296,13 @@ def simulate_pure_r(
                 if dd_r > max_dd_r:
                     max_dd_r = dd_r
 
+                total_trade_r = (0.50 + outcome_r) if partial_closed else outcome_r
                 trades.append({
                     'time': c_time,
                     'type': 'BUY' if t_type == 1 else 'SELL',
-                    'outcome': 'WIN' if outcome_r > 0 else 'LOSS',
-                    'r': outcome_r,
-                    'cum_r': cumulative_r
+                    'outcome': 'WIN' if total_trade_r > 0 else 'LOSS',
+                    'r': round(total_trade_r, 2),
+                    'cum_r': round(cumulative_r, 2)
                 })
                 active_trade = None
 
@@ -283,21 +321,23 @@ def simulate_pure_r(
             if chop[i] > chop_max:
                 continue
 
-            # Multi-Timeframe H1 Macro Trend
+            # Multi-Timeframe H1 Macro Trend with EMA 50 baseline
             h1_idx = np.searchsorted(h1_times, c_time, side='right') - 1
             if h1_idx < 0:
                 continue
             h1_f = h1_fast[h1_idx]
             h1_s = h1_slow[h1_idx]
             h1_c = h1_close[h1_idx]
+            h1_50_val = h1.get('ema_50', h1_slow)[h1_idx]
 
-            h1_bull = (h1_f > h1_s) and (h1_c > h1_f)
-            h1_bear = (h1_f < h1_s) and (h1_c < h1_f)
+            h1_bull = (h1_f > h1_s) and (h1_c > h1_s) and (h1_c > h1_50_val * 0.999)
+            h1_bear = (h1_f < h1_s) and (h1_c < h1_s) and (h1_c < h1_50_val * 1.001)
 
             c_close = close[i]
             c_open = open_p[i]
-            m5_up = (ema_f[i] > ema_s[i]) and (c_close > ema_f[i])
-            m5_down = (ema_f[i] < ema_s[i]) and (c_close < ema_f[i])
+            ema_trend_val = m5.get('ema_trend', ema_s)[i]
+            m5_up = (ema_f[i] > ema_s[i]) and (c_close > ema_f[i]) and (c_close >= ema_trend_val * 0.999)
+            m5_down = (ema_f[i] < ema_s[i]) and (c_close < ema_f[i]) and (c_close <= ema_trend_val * 1.001)
 
             c_rsi = rsi[i]
             c_rsi_p1 = rsi[i - 1]
@@ -344,7 +384,7 @@ def simulate_pure_r(
                     entry = c_close
                     sl = entry - sl_dist
                     tp = entry + tp_dist
-                    active_trade = (1, entry, sl, tp, be_trigger, be_offset, False, sl_dist, target_r)
+                    active_trade = (1, entry, sl, tp, be_trigger, be_offset, False, False, sl_dist, target_r)
 
             # SELL SETUP
             elif m5_down and h1_bear:
@@ -356,7 +396,7 @@ def simulate_pure_r(
                     entry = c_close
                     sl = entry + sl_dist
                     tp = entry - tp_dist
-                    active_trade = (-1, entry, sl, tp, be_trigger, be_offset, False, sl_dist, target_r)
+                    active_trade = (-1, entry, sl, tp, be_trigger, be_offset, False, False, sl_dist, target_r)
 
     total_trades = len(trades)
     wins = [t for t in trades if t['outcome'] == 'WIN']
@@ -402,12 +442,13 @@ def train_single_coin(symbol: str) -> Dict[str, Any]:
         use_vwap_filter=False
     )
 
-    # Parameter grid for training
+    # Expanded Parameter grid for institutional training
     param_grid = {
         'chop_max': [58.0, 61.8],
-        'rsi_pullback_os': [45.0, 48.0],
+        'rsi_pullback_os': [42.0, 45.0, 48.0],
         'z_score_limit': [1.5, 1.8],
-        'base_tp_mult': [2.5, 3.0]
+        'base_tp_mult': [2.0, 2.5, 3.0],
+        'base_sl_mult': [1.2, 1.5]
     }
 
     keys, values = zip(*param_grid.items())
@@ -424,15 +465,16 @@ def train_single_coin(symbol: str) -> Dict[str, Any]:
             rsi_pullback_os=p['rsi_pullback_os'],
             z_score_limit=p['z_score_limit'],
             base_tp_mult=p['base_tp_mult'],
+            base_sl_mult=p['base_sl_mult'],
             use_adaptive_atr=True,
             use_vwap_filter=True
         )
-        if res['total_trades'] < 10:
+        if res['total_trades'] < 8:
             continue
 
         # Mathematical Fitness Function in pure R-multiples:
-        # Score = Total R * Profit Factor - (Max Drawdown R * 2.0)
-        score = (res['total_r'] * res['profit_factor']) - (res['max_drawdown_r'] * 2.0)
+        pf = max(0.2, min(5.0, res['profit_factor']))
+        score = (res['total_r'] * pf) - (res['max_drawdown_r'] * 1.5)
         if score > best_score:
             best_score = score
             best_res = res
@@ -440,7 +482,7 @@ def train_single_coin(symbol: str) -> Dict[str, Any]:
 
     if best_res is None:
         best_res = benchmark_res
-        best_params = {'chop_max': 61.8, 'rsi_pullback_os': 48.0, 'z_score_limit': 1.8, 'base_tp_mult': 2.5}
+        best_params = {'chop_max': 61.8, 'rsi_pullback_os': 45.0, 'z_score_limit': 1.8, 'base_tp_mult': 2.5, 'base_sl_mult': 1.5}
 
     return {
         'symbol': symbol,
@@ -455,7 +497,7 @@ def train_single_coin(symbol: str) -> Dict[str, Any]:
 
 def main():
     console.print(Panel.fit(
-        "[bold cyan]★ 1-YEAR QUANTITATIVE ENGINE TRAINING (ALL COINS & PAIRS) ★[/bold cyan]\n"
+        "[bold cyan]* 1-YEAR QUANTITATIVE ENGINE TRAINING (ALL COINS & PAIRS) *[/bold cyan]\n"
         "[white]Trained on 1 Full Year (~100,000 M5 candles per coin) on Exness MT5 Data\n"
         "Evaluated purely in Mathematical R-Multiples (Risk Units) — 100% Capital Independent[/white]",
         border_style="cyan"
@@ -514,7 +556,7 @@ def main():
 
             b_str = f"{b_m['win_rate']}% | {b_m['total_r']:+.1f}R | PF {b_m['profit_factor']:.2f}"
             t_str = f"{t_m['win_rate']}% | [bold green]{t_m['total_r']:+.1f}R[/bold green] | PF {t_m['profit_factor']:.2f} | DD {t_m['max_drawdown_r']:.1f}R"
-            param_str = f"CHOP<{p['chop_max']} | RSI:{p['rsi_pullback_os']} | |Z|<={p['z_score_limit']} | TP:{p['base_tp_mult']}x"
+            param_str = f"CHOP<{p['chop_max']} | RSI:{p['rsi_pullback_os']} | |Z|<={p['z_score_limit']} | SL:{p.get('base_sl_mult', 1.5)}x | TP:{p['base_tp_mult']}x"
 
             type_label = "[bold yellow]CRYPTO[/bold yellow]" if res['is_crypto'] else "[bold cyan]FOREX[/bold cyan]"
 

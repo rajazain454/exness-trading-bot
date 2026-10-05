@@ -70,13 +70,22 @@ class QuantitativeEngine:
         return chop
 
     @staticmethod
-    def calculate_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series) -> pd.Series:
+    def calculate_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, datetimes: pd.Series = None) -> pd.Series:
         """
-        Calculates cumulative Volume-Weighted Average Price (VWAP).
-        VWAP = sum(Typical Price * Volume) / sum(Volume)
+        Calculates Daily Anchored Volume-Weighted Average Price (VWAP).
+        Resets at 00:00 UTC each day to represent true intraday institutional fair value.
+        If datetimes is None, calculates cumulative VWAP over the provided series.
         """
         typical_price = (high + low + close) / 3.0
-        cum_vol_price = (typical_price * volume).cumsum()
+        pv = typical_price * volume
+
+        if datetimes is not None:
+            dates = pd.to_datetime(datetimes).dt.date
+            cum_pv = pv.groupby(dates).cumsum()
+            cum_vol = volume.groupby(dates).cumsum() + 1e-9
+            return cum_pv / cum_vol
+
+        cum_vol_price = pv.cumsum()
         cum_vol = volume.cumsum() + 1e-9
         return cum_vol_price / cum_vol
 

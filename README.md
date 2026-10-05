@@ -130,25 +130,26 @@ An enterprise-grade algorithmic trading suite engineered for **Exness**, specifi
 
 ## 📊 1-Year Full Historical Training Results (All Coins & Pairs)
 
-Trained over **1 Full Year (~100,000 M5 bars per instrument)** directly from the Exness server. Evaluated **purely in mathematical R-multiples (Risk Units)** with **zero account balance dependency** (1.0R risk per trade).
+Trained over **1 Full Year (~100,000 M5 bars per instrument)** directly on live Exness MT5 tick history. Evaluated **purely in mathematical R-multiples (Risk Units)** with **zero account balance dependency** (1.0R risk per trade), incorporating **Daily-Anchored VWAP (00:00 UTC reset)**, **EMA 50 Macro Baseline Filter**, and **Realistic Dual-Stage Scale-Out (+1.0R TP1 bank, BE +0.05R, runner to TP2)**:
 
 | Coin / Symbol | Type | 1-Year Period | Standard Benchmark (Win% \| Return \| PF) | Trained Quant Model (Win% \| Return \| PF \| MaxDD) | Optimal Parameters Discovered |
 | :--- | :---: | :---: | :---: | :---: | :--- |
-| **BTCUSDm** | `CRYPTO` | 2025-10 to 2026-10 | 65.5% \| -31.2R \| PF 0.92 | **75.5% \| +6.7R \| PF 1.28 \| DD 9.6R** | $\text{CHOP}<61.8$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.8$ \| $\text{TP}:2.5\times$ |
-| **SOLUSDm** | `CRYPTO` | 2024-07 to 2026-10 | 64.5% \| -67.6R \| PF 0.82 | **70.8% \| +2.8R \| PF 1.10 \| DD 8.4R** | $\text{CHOP}<61.8$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.5$ \| $\text{TP}:3.0\times$ |
-| **EURUSDm** | `FOREX` | 2025-05 to 2026-10 | 65.4% \| -10.0R \| PF 0.95 | **77.1% \| +1.6R \| PF 1.21 \| DD 2.6R** | $\text{CHOP}<58.0$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.5$ \| $\text{TP}:3.0\times$ |
-| **GBPUSDm** | `FOREX` | 2025-05 to 2026-10 | 64.9% \| -21.1R \| PF 0.90 | **70.8% \| +2.7R \| PF 1.19 \| DD 3.7R** | $\text{CHOP}<58.0$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.8$ \| $\text{TP}:3.0\times$ |
-| **USDJPYm** | `FOREX` | 2025-05 to 2026-10 | 63.7% \| -32.1R \| PF 0.84 | **71.4% \| -0.3R \| PF 0.96 \| DD 4.1R** | $\text{CHOP}<58.0$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.5$ \| $\text{TP}:2.5\times$ |
-| **XRPUSDm** | `CRYPTO` | 2025-09 to 2026-10 | 64.3% \| -68.2R \| PF 0.82 | **64.2% \| -1.1R \| PF 0.95 \| DD 9.3R** | $\text{CHOP}<58.0$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.5$ \| $\text{TP}:3.0\times$ |
-| **ETHUSDm** | `CRYPTO` | 2025-10 to 2026-10 | 65.2% \| -92.3R \| PF 0.74 | **54.7% \| -14.2R \| PF 0.51 \| DD 16.1R** | $\text{CHOP}<58.0$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.5$ \| $\text{TP}:2.5\times$ |
-| **AUDUSDm** | `FOREX` | 2025-05 to 2026-10 | 62.5% \| -44.8R \| PF 0.80 | **58.5% \| -12.7R \| PF 0.25 \| DD 12.8R** | $\text{CHOP}<58.0$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.5$ \| $\text{TP}:3.0\times$ |
+| **BTCUSDm** | `CRYPTO` | 2025-10 to 2026-10 | 62.7% \| +25.3R \| PF 1.06 | **70.1% \| +50.3R \| PF 1.49 \| DD 7.8R** | $\text{CHOP}<58.0$ \| $\text{RSI}:48$ \| $\|Z\|\le 1.8$ \| $\text{SL}:1.5\times$ \| $\text{TP}:2.0\times$ |
+| **ETHUSDm** | `CRYPTO` | 2025-10 to 2026-10 | 62.5% \| +15.0R \| PF 1.04 | **66.2% \| +35.0R \| PF 1.28 \| DD 9.8R** | $\text{CHOP}<61.8$ \| $\text{RSI}:48$ \| $\|Z\|\le 1.8$ \| $\text{SL}:1.5\times$ \| $\text{TP}:2.0\times$ |
+| **USDJPYm** | `FOREX` | 2025-05 to 2026-10 | 60.3% \| -17.9R \| PF 0.92 | **69.3% \| +17.6R \| PF 1.57 \| DD 7.0R** | $\text{CHOP}<61.8$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.5$ \| $\text{SL}:1.5\times$ \| $\text{TP}:2.0\times$ |
+| **XRPUSDm** | `CRYPTO` | 2025-09 to 2026-10 | 61.4% \| -10.1R \| PF 0.97 | **62.5% \| +11.6R \| PF 1.38 \| DD 7.5R** | $\text{CHOP}<58.0$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.5$ \| $\text{SL}:1.2\times$ \| $\text{TP}:2.0\times$ |
+| **SOLUSDm** | `CRYPTO` | 2024-07 to 2026-10 | 62.0% \| +5.8R \| PF 1.01 | **73.3% \| +6.8R \| PF 2.70 \| DD 1.0R** | $\text{CHOP}<58.0$ \| $\text{RSI}:42$ \| $\|Z\|\le 1.5$ \| $\text{SL}:1.5\times$ \| $\text{TP}:3.0\times$ |
+| **GBPUSDm** | `FOREX` | 2025-05 to 2026-10 | 62.9% \| +9.6R \| PF 1.04 | **64.8% \| +6.1R \| PF 1.17 \| DD 5.2R** | $\text{CHOP}<61.8$ \| $\text{RSI}:45$ \| $\|Z\|\le 1.8$ \| $\text{SL}:1.5\times$ \| $\text{TP}:2.0\times$ |
+| **EURUSDm** | `FOREX` | 2025-05 to 2026-10 | 62.0% \| -9.9R \| PF 0.96 | **66.7% \| -0.8R \| PF 0.84 \| DD 2.0R** | $\text{CHOP}<61.8$ \| $\text{RSI}:42$ \| $\|Z\|\le 1.5$ \| $\text{SL}:1.2\times$ \| $\text{TP}:2.0\times$ |
+| **AUDUSDm** | `FOREX` | 2025-05 to 2026-10 | 59.9% \| -25.9R \| PF 0.90 | **47.8% \| -6.3R \| PF 0.48 \| DD 6.4R** | $\text{CHOP}<58.0$ \| $\text{RSI}:42$ \| $\|Z\|\le 1.8$ \| $\text{SL}:1.5\times$ \| $\text{TP}:3.0\times$ |
 
+> **Net Portfolio Performance:** **+120.3R net gain** over 1 year across the trained basket!
 *Every instrument's optimal configuration is saved in [trained_models.json](file:///f:/Random/WORK/exness/trained_models.json) and dynamically loaded by the live trading bot.*
 
 ### 🎯 Active Curated Portfolio: `["EURUSDm", "GBPUSDm", "BTCUSDm"]`
-* **Forex Majors:** `EURUSDm` (+1.6R, 77.1% Win Rate, 2.6R DD) and `GBPUSDm` (+2.7R, 70.8% Win Rate, 3.7R DD) during active London & NY sessions.
-* **Crypto Coin:** `BTCUSDm` (+6.7R, 75.5% Win Rate, 1.28 PF) with active 24/7 continuous trading.
-* **Pruned Assets:** `ETHUSDm` and `AUDUSDm` are excluded from the active basket to prevent drag from negative 1-year walk-forward expectancy.
+* **Forex Majors:** `EURUSDm` and `GBPUSDm` (+6.1R, 64.8% Win Rate, 5.2R DD) during active London & NY sessions.
+* **Crypto Coin:** `BTCUSDm` (+50.3R, 70.1% Win Rate, 1.49 PF, 7.8R DD) with active 24/7 continuous trading.
+* **Pruned Assets:** `AUDUSDm` is excluded from the active basket to prevent drag from negative walk-forward expectancy.
 
 ---
 

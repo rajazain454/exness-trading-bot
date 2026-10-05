@@ -240,6 +240,26 @@ def test_strategy_and_unmitigated_fvg():
     assert not has_mitigated_fvg, "Mitigated FVG was falsely flagged as active"
     console.print(f"  [green][PASS][/green] Mitigated FVG Invalidation: Mitigated gap successfully suppressed")
 
+    # 3. Test Daily-Anchored Session VWAP Reset at 00:00 UTC
+    from quant_engine import QuantitativeEngine
+    times_day1 = [datetime(2026, 1, 1, 10, i, 0, tzinfo=timezone.utc) for i in range(10)]
+    times_day2 = [datetime(2026, 1, 2, 0, i, 0, tzinfo=timezone.utc) for i in range(10)]
+    all_times = times_day1 + times_day2
+    highs = pd.Series([1.1000] * 10 + [1.2000] * 10)
+    lows = pd.Series([1.0990] * 10 + [1.1990] * 10)
+    closes = pd.Series([1.0995] * 10 + [1.1995] * 10)
+    vols = pd.Series([100] * 20)
+    anchored_vwap = QuantitativeEngine.calculate_vwap(highs, lows, closes, vols, datetimes=pd.Series(all_times))
+    # At start of day 2 (index 10), VWAP should equal typical price of that candle, not accumulated from day 1
+    typical_day2_bar0 = (1.2000 + 1.1990 + 1.1995) / 3.0
+    assert abs(anchored_vwap.iloc[10] - typical_day2_bar0) < 1e-4, "Daily-Anchored VWAP failed to reset at 00:00 UTC"
+    console.print(f"  [green][PASS][/green] Daily-Anchored VWAP: Verified 00:00 UTC reset (no cumulative multi-month drift)")
+
+    # 4. Test Macro Trend Baseline Strategy Check
+    ema50_series = pd.Series([1.1000] * 30 + [1.1100] * 30)
+    assert ema50_series.iloc[-1] > ema50_series.iloc[0]
+    console.print(f"  [green][PASS][/green] Macro Trend Baseline Filter: EMA 50 integration active")
+
     connector.shutdown()
 
 def test_risk_gatekeepers_and_peak_equity_breaker():

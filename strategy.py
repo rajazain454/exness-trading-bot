@@ -49,6 +49,7 @@ class ForexConfluenceStrategy:
         # EMAs
         df["ema_fast"] = close.ewm(span=self.ema_fast, adjust=False).mean()
         df["ema_slow"] = close.ewm(span=self.ema_slow, adjust=False).mean()
+        df["ema_trend"] = close.ewm(span=getattr(config, "EMA_TREND_BASELINE", 50), adjust=False).mean()
 
         # Volume 20 SMA
         df["vol_sma20"] = vol.rolling(window=20).mean()
@@ -87,24 +88,26 @@ class ForexConfluenceStrategy:
         # 2. Fractal Choppiness Index (CHOP)
         df["chop"] = QuantitativeEngine.calculate_choppiness_index(high, low, close, period=14)
 
-        # 3. Intraday Cumulative VWAP
-        df["vwap"] = QuantitativeEngine.calculate_vwap(high, low, close, vol)
+        # 3. Daily-Anchored Session VWAP
+        df["vwap"] = QuantitativeEngine.calculate_vwap(high, low, close, vol, datetimes=df["time"])
 
         return df
 
     def analyze_h1_trend(self, h1_rates) -> Tuple[str, float, float]:
-        """Determines macro trend from H1 candles."""
+        """Determines macro trend regime from H1 candles using Fast/Slow EMAs and EMA 50 baseline."""
         if h1_rates is None or len(h1_rates) < self.ema_slow:
             return "UNKNOWN", 0.0, 0.0
 
         df_h1 = pd.DataFrame(h1_rates)
-        ema_f = df_h1["close"].ewm(span=self.ema_fast, adjust=False).mean().iloc[-1]
-        ema_s = df_h1["close"].ewm(span=self.ema_slow, adjust=False).mean().iloc[-1]
-        close = df_h1["close"].iloc[-1]
+        s_close = df_h1["close"]
+        ema_f = s_close.ewm(span=self.ema_fast, adjust=False).mean().iloc[-1]
+        ema_s = s_close.ewm(span=self.ema_slow, adjust=False).mean().iloc[-1]
+        ema_50 = s_close.ewm(span=50, adjust=False).mean().iloc[-1] if len(s_close) >= 50 else ema_s
+        close = s_close.iloc[-1]
 
-        if ema_f > ema_s and close > ema_f:
+        if ema_f > ema_s and close > ema_s and close > (ema_50 * 0.999):
             return "BULLISH", ema_f, ema_s
-        elif ema_f < ema_s and close < ema_f:
+        elif ema_f < ema_s and close < ema_s and close < (ema_50 * 1.001):
             return "BEARISH", ema_f, ema_s
         return "NEUTRAL", ema_f, ema_s
 
@@ -165,8 +168,9 @@ class ForexConfluenceStrategy:
             lower_wick_ratio = 0.0
             upper_wick_ratio = 0.0
 
-        m5_uptrend = (ema_fast_val > ema_slow_val) and (close > ema_fast_val)
-        m5_downtrend = (ema_fast_val < ema_slow_val) and (close < ema_fast_val)
+        ema_trend_val = curr_candle.get("ema_trend", ema_slow_val)
+        m5_uptrend = (ema_fast_val > ema_slow_val) and (close > ema_fast_val) and (close >= ema_trend_val * 0.999)
+        m5_downtrend = (ema_fast_val < ema_slow_val) and (close < ema_fast_val) and (close <= ema_trend_val * 1.001)
 
         h1_trend, _, _ = self.analyze_h1_trend(h1_rates)
         has_fvg, fvg_type = smc_engine.detect_recent_fvg(df_m5) if smc_engine else (False, "NONE")
@@ -175,6 +179,7 @@ class ForexConfluenceStrategy:
             "close": round(close, 5),
             "ema_fast": round(ema_fast_val, 5),
             "ema_slow": round(ema_slow_val, 5),
+            "ema_trend": round(ema_trend_val, 5),
             "rsi": round(rsi_curr, 2),
             "atr": round(atr_val, 5),
             "atr_pct": round(atr_percentile, 1),
