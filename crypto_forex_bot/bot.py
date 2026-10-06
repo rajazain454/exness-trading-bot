@@ -64,6 +64,10 @@ class ExnessTradingBot:
         for s in raw_symbols:
             valid = self.connector.verify_symbol(s)
             if valid and valid not in self.basket_symbols:
+                s_info = mt5.symbol_info(valid)
+                if s_info and s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_DISABLED:
+                    self.log(f"Symbol {valid} trade mode is DISABLED on Exness. Skipping.", "WARNING")
+                    continue
                 self.basket_symbols.append(valid)
 
         if not self.basket_symbols:
@@ -250,22 +254,25 @@ class ExnessTradingBot:
             score = analysis.get("score", 0)
             sig = analysis.get("signal", "HOLD")
 
-            if sig in ["BUY", "SELL"] and score > best_candidate["score"]:
-                best_candidate = {
-                    "symbol": sym,
-                    "signal": sig,
-                    "score": score,
-                    "metrics": analysis.get("metrics", {}),
-                    "reason": analysis.get("reason", "")
-                }
-            elif best_candidate["score"] < 0:
-                best_candidate = {
-                    "symbol": sym,
-                    "signal": sig,
-                    "score": score,
-                    "metrics": analysis.get("metrics", {}),
-                    "reason": analysis.get("reason", "")
-                }
+            if sig in ["BUY", "SELL"]:
+                if best_candidate["signal"] not in ["BUY", "SELL"] or score > best_candidate["score"]:
+                    best_candidate = {
+                        "symbol": sym,
+                        "signal": sig,
+                        "score": score,
+                        "metrics": analysis.get("metrics", {}),
+                        "reason": analysis.get("reason", "")
+                    }
+            elif best_candidate["signal"] not in ["BUY", "SELL"]:
+                current_best_score = best_candidate.get("score", -1)
+                if score > current_best_score or current_best_score < 0:
+                    best_candidate = {
+                        "symbol": sym,
+                        "signal": sig,
+                        "score": score,
+                        "metrics": analysis.get("metrics", {}),
+                        "reason": analysis.get("reason", "")
+                    }
 
         return best_candidate
 

@@ -3,9 +3,9 @@
         "symbol": "BTCUSDm",
         "is_crypto": true,
         "optimal_parameters": {
-            "chop_max": 58.0,
+            "chop_max": 61.8,
             "rsi_pullback_os": 48.0,
-            "z_score_limit": 1.8,
+            "z_score_limit": 2.8,
             "base_tp_mult": 2.0,
             "base_sl_mult": 1.5
         },
@@ -24,7 +24,7 @@
         "optimal_parameters": {
             "chop_max": 61.8,
             "rsi_pullback_os": 48.0,
-            "z_score_limit": 1.8,
+            "z_score_limit": 2.8,
             "base_tp_mult": 2.0,
             "base_sl_mult": 1.5
         },
@@ -41,9 +41,9 @@
         "symbol": "SOLUSDm",
         "is_crypto": true,
         "optimal_parameters": {
-            "chop_max": 58.0,
-            "rsi_pullback_os": 42.0,
-            "z_score_limit": 1.5,
+            "chop_max": 61.8,
+            "rsi_pullback_os": 48.0,
+            "z_score_limit": 2.8,
             "base_tp_mult": 3.0,
             "base_sl_mult": 1.5
         },
@@ -60,9 +60,9 @@
         "symbol": "XRPUSDm",
         "is_crypto": true,
         "optimal_parameters": {
-            "chop_max": 58.0,
-            "rsi_pullback_os": 45.0,
-            "z_score_limit": 1.5,
+            "chop_max": 61.8,
+            "rsi_pullback_os": 48.0,
+            "z_score_limit": 2.8,
             "base_tp_mult": 2.0,
             "base_sl_mult": 1.2
         },
@@ -80,8 +80,8 @@
         "is_crypto": false,
         "optimal_parameters": {
             "chop_max": 61.8,
-            "rsi_pullback_os": 42.0,
-            "z_score_limit": 1.5,
+            "rsi_pullback_os": 48.0,
+            "z_score_limit": 2.8,
             "base_tp_mult": 2.0,
             "base_sl_mult": 1.2
         },
@@ -99,8 +99,8 @@
         "is_crypto": false,
         "optimal_parameters": {
             "chop_max": 61.8,
-            "rsi_pullback_os": 45.0,
-            "z_score_limit": 1.8,
+            "rsi_pullback_os": 48.0,
+            "z_score_limit": 2.8,
             "base_tp_mult": 2.0,
             "base_sl_mult": 1.5
         },
@@ -118,8 +118,8 @@
         "is_crypto": false,
         "optimal_parameters": {
             "chop_max": 61.8,
-            "rsi_pullback_os": 45.0,
-            "z_score_limit": 1.5,
+            "rsi_pullback_os": 48.0,
+            "z_score_limit": 2.8,
             "base_tp_mult": 2.0,
             "base_sl_mult": 1.5
         },

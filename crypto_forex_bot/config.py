@@ -26,8 +26,8 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 # ==========================================
 SYMBOL = os.getenv("TRADING_SYMBOL", "EURUSDm")
 USE_MULTI_PAIR_BASKET = True  # Scans major pairs and picks the best setup
-# Curated 1-Year Historical Winners with Active Broker Ticks (EURUSDm, GBPUSDm, BTCUSDm)
-SYMBOLS_BASKET = ["EURUSDm", "GBPUSDm", "BTCUSDm"]
+# Curated Liquid Pairs with Active Broker Execution (BTCUSDm, ETHUSDm, EURUSDm, GBPUSDm, USDJPYm)
+SYMBOLS_BASKET = ["BTCUSDm", "ETHUSDm", "EURUSDm", "GBPUSDm", "USDJPYm"]
 
 TIMEFRAME = "M5"              # Primary execution timeframe
 HIGHER_TIMEFRAME = "H1"       # Macro trend alignment timeframe
@@ -45,7 +45,7 @@ KELLY_FRACTION = 0.25         # Quarter-Kelly for maximum safety on $30 capital
 # 2. Z-Score Statistical Pullback Filter
 Z_SCORE_FILTER_ENABLED = True
 Z_SCORE_PULLBACK_THRESHOLD = 0.8  # Must be >= 0.8 std dev stretched for discount entry
-Z_SCORE_PULLBACK_MAX = 2.0        # Cap maximum overextension
+Z_SCORE_PULLBACK_MAX = 2.8        # Blow-off top shield (protects against 3-sigma extremes)
 
 # 3. Fractal Choppiness Index (CHOP)
 CHOP_FILTER_ENABLED = True
@@ -98,7 +98,7 @@ MIN_CSM_DIFFERENTIAL = 1.0
 # ==========================================
 PRICE_ACTION_FILTER_ENABLED = True
 MIN_REJECTION_WICK_RATIO = 0.15
-MIN_VOLUME_SURGE_RATIO = 1.0
+MIN_VOLUME_SURGE_RATIO = 0.70
 
 # ==========================================
 # FLASH CRASH & SPREAD ANOMALY SHIELD
