@@ -75,7 +75,7 @@ CONSECUTIVE_LOSS_COOLDOWN_BARS = 6 # 6 M5 bars (30 min) cooling period after cir
 # Dynamic ATR Stop Loss & Take Profit for Gold
 ATR_PERIOD = 14
 ATR_SL_MULTIPLIER = 1.3      # Stop Loss = 1.3 x ATR
-ATR_TP_MULTIPLIER = 1.2      # Scalp Take Profit multiplier (quick profit banking)
+ATR_TP_MULTIPLIER = 1.8      # Baseline dynamic Take Profit multiplier (1.8x ATR)
 MAX_TP_DOLLARS = 3.50        # Hard cap on Take Profit: max $3.00 - $3.50 profit on 0.01 lot ($3.50 price distance)
 MIN_TP_DOLLARS = 2.00        # Minimum TP floor ($2.00 price distance)
 USE_PARTIAL_TP = True
