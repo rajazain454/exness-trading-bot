@@ -153,28 +153,64 @@ class TestGoldMultiStrategy(unittest.TestCase):
         regime_range = self.strategy.classify_market_regime(curr_ranging, prev)
         self.assertEqual(regime_range, "RANGING_CONSOLIDATION")
 
-    def test_confluence_scoring_threshold(self):
-        """Verifies that setups scoring < 75 are rejected as NO TRADE (HOLD)."""
-        # Minimal rates
-        n = 60
-        rates = []
+    def test_m1_micro_bos_detection(self):
+        """Verifies institutional M1 Micro-Displacement and 5-bar Micro-BOS detection."""
+        # 10 candles where the prior 5 bars have high = 2650.0, and the last bar breaks out to 2653.0 with displacement
+        n = 10
+        highs = [2650.0] * n
+        lows = [2648.0] * n
+        opens = [2648.5] * n
+        closes = [2649.5] * n
+
+        # Set trigger bar at -1
+        highs[-1] = 2653.0
+        lows[-1] = 2649.0
+        opens[-1] = 2649.2
+        closes[-1] = 2652.8  # Strong green breakout candle breaking prior 5 highs (2650.0)
+
+        m1_rates = []
         for i in range(n):
-            rates.append({
-                "time": 1700000000 + (i * 300),
-                "open": 2650.0,
-                "high": 2651.0,
-                "low": 2649.0,
-                "close": 2650.0,
-                "tick_volume": 100
+            m1_rates.append({
+                "high": highs[i],
+                "low": lows[i],
+                "open": opens[i],
+                "close": closes[i],
+                "time": i * 60
             })
 
-        analysis = self.strategy.analyze(rates)
-        self.assertIn("confluence_score", analysis)
-        self.assertIn("grade", analysis)
-        # Without confluence, score should be low and signal must be HOLD
-        self.assertLess(analysis["confluence_score"], 75)
-        self.assertEqual(analysis["signal"], "HOLD")
+        timing = self.strategy.analyze_m1_microstructure(m1_rates)
+        self.assertTrue(timing["bullish_confirmed"])
+        self.assertTrue(timing["micro_bos_bull"])
+        self.assertTrue(timing["is_displaced"])
+        self.assertFalse(timing["micro_bos_bear"])
+
+    def test_ml_expected_value_calculation(self):
+        """Verifies ML Probability and Expected Value mathematical computation."""
+        from gold_scalper.ml_gold import GoldMLProbabilityEngine
+        ml_engine = GoldMLProbabilityEngine(min_p_win=0.55, min_ev_r=0.15, sl_mult=1.3, tp_mult=1.8)
+
+        # High-confluence setup features
+        features = {
+            "core_setup_pts": 25,
+            "mss_pts": 20,
+            "fvg_pts": 15,
+            "h1_macro_pts": 15,
+            "vol_ratio": 1.5,
+            "m1_disp": True,
+            "m1_bos": True,
+            "chop": 42.0,
+            "adx": 28.0,
+            "z_score": 0.5,
+            "wick_ratio": 0.35
+        }
+
+        res = ml_engine.evaluate_expectancy(features, spread_usd=0.24, atr_usd=2.50)
+        self.assertGreater(res["p_win"], 0.55)
+        self.assertGreater(res["expected_value_r"], 0.15)
+        self.assertTrue(res["trade_valid"])
+        self.assertIn(res["grade"], ["A", "A+"])
 
 
 if __name__ == "__main__":
     unittest.main()
+

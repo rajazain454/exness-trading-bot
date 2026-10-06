@@ -42,12 +42,22 @@ VOLUME_MA_PERIOD = 20        # 20-period Volume Moving Average
 VOLUME_THRESHOLD_MULT = 1.10 # Signal candle volume must be >= 1.10x 20-bar average
 
 # ==========================================
-# SESSION TRADING HOURS (UTC)
+# DUAL-WAVE INSTITUTIONAL SESSION TRADING HOURS (UTC)
 # ==========================================
-# Gold institutional volume is concentrated in London & New York
-SESSION_START_HOUR_UTC = 8   # 08:00 UTC (London Open)
-SESSION_END_HOUR_UTC = 17    # 17:00 UTC (Walk-Forward Champion: London & NY peak overlap)
-AVOID_ASIAN_SESSION = True   # Avoid 22:00 - 06:00 UTC low-liquidity chop
+# Gold institutional volume is concentrated in London Open & New York Overlap.
+# Wave 1 (London Open Drive): 08:00 to 11:30 UTC (Asian sweeps & morning momentum)
+# Midday Lull (Bank Lunch Chop): 11:30 to 13:00 UTC (Auto-Paused to avoid dead chop)
+# Wave 2 (New York Open & Overlap): 13:00 to 17:00 UTC (Massive US macro volume)
+WAVE_1_START_HOUR_UTC = 8.0    # 08:00 UTC
+WAVE_1_END_HOUR_UTC = 11.5      # 11:30 UTC
+WAVE_2_START_HOUR_UTC = 13.0   # 13:00 UTC
+WAVE_2_END_HOUR_UTC = 17.0     # 17:00 UTC
+AVOID_MIDDAY_LULL = True       # Pause during 11:30 - 13:00 UTC bank lunch lull
+AVOID_ASIAN_SESSION = True     # Avoid 17:00 - 08:00 UTC low-liquidity chop
+
+# Legacy backward-compatibility aliases
+SESSION_START_HOUR_UTC = 8
+SESSION_END_HOUR_UTC = 17
 
 # ==========================================
 # SCALPING RISK & POSITION SIZING

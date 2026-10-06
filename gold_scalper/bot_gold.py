@@ -167,15 +167,31 @@ class GoldScalperBot:
         )
 
         acc = mt5.account_info()
-        now_utc = datetime.now(timezone.utc)
-        hour = now_utc.hour
-        session_active = (config_gold.SESSION_START_HOUR_UTC <= hour < config_gold.SESSION_END_HOUR_UTC)
+        # Dual-Wave Session State Indicator
+        dec_hour = hour + (now_utc.minute / 60.0)
+        w1_start = getattr(config_gold, "WAVE_1_START_HOUR_UTC", 8.0)
+        w1_end = getattr(config_gold, "WAVE_1_END_HOUR_UTC", 11.5)
+        w2_start = getattr(config_gold, "WAVE_2_START_HOUR_UTC", 13.0)
+        w2_end = getattr(config_gold, "WAVE_2_END_HOUR_UTC", 17.0)
+
+        if w1_start <= dec_hour < w1_end:
+            session_label = "🟢 LONDON OPEN (08:00 - 11:30 UTC)"
+            session_style = "bold green"
+        elif w1_end <= dec_hour < w2_start:
+            session_label = "⏸️ MIDDAY LULL (11:30 - 13:00 UTC)"
+            session_style = "bold yellow"
+        elif w2_start <= dec_hour < w2_end:
+            session_label = "🟢 NEW YORK OVERLAP (13:00 - 17:00 UTC)"
+            session_style = "bold green"
+        else:
+            session_label = "🔴 OFF-HOURS (Asian / Late Night)"
+            session_style = "bold red"
 
         # Header
         h_text = Text()
-        h_text.append("[INSTITUTIONAL GOLD (XAUUSDm) SCALPER ENGINE]", style="bold gold1")
+        h_text.append("[INSTITUTIONAL GOLD (XAUUSDm) ML SCALPER]", style="bold gold1")
         h_text.append(f"  |  Account: {acc.login if acc else 'N/A'}", style="bold yellow")
-        h_text.append(f"  |  Session: {'🟢 ACTIVE (London/NY)' if session_active else '🔴 OFF-HOURS (Asian/Late)'}", style="bold green" if session_active else "bold red")
+        h_text.append(f"  |  Session: {session_label}", style=session_style)
         h_text.append(f"  |  UTC: {now_utc.strftime('%H:%M:%S')}", style="bold white")
         layout["header"].update(Panel(h_text, style="gold1"))
 
@@ -231,6 +247,9 @@ class GoldScalperBot:
         setup_name = analysis.get("setup", "NONE")
         regime = analysis.get("regime", metrics.get("regime", "UNKNOWN"))
         levels = metrics.get("levels", {})
+        ml_data = metrics.get("ml", {})
+        p_win_val = ml_data.get("win_probability_pct", conf * 100.0)
+        ev_val = ml_data.get("expected_value_r", 0.0)
         tick = mt5.symbol_info_tick(self.symbol)
         spread_pts = (tick.ask - tick.bid) / 0.001 if tick else 0
 
@@ -249,6 +268,8 @@ class GoldScalperBot:
         m_table.add_row("Circuit Breaker", cb_display)
         sig_col = "bold green" if sig == "BUY" else ("bold red" if sig == "SELL" else "bold yellow")
         m_table.add_row("Multi-Strat Setup", f"[bold magenta]{setup_name}[/bold magenta]")
+        ev_col = "bold green" if ev_val >= 0.15 else ("bold yellow" if ev_val >= 0 else "dim red")
+        m_table.add_row("ML Win Prob / EV", f"P: [bold white]{p_win_val:.1f}%[/bold white] | EV: [{ev_col}]{ev_val:+.2f}R[/]")
         m_table.add_row("Confluence Signal", f"[{sig_col}]{sig}[/] [[bold white]{grade}[/bold white]] ({score}/100 pts)")
         layout["market_box"].update(Panel(m_table, title="[bold]Institutional Multi-Strategy Confluence[/bold]", border_style="gold1"))
 

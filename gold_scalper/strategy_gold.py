@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 from gold_scalper import config_gold
 from gold_scalper.liquidity_gold import GoldLiquidityEngine
+from gold_scalper.ml_gold import GoldMLProbabilityEngine
 
 
 class GoldScalperStrategy:
@@ -35,7 +36,13 @@ class GoldScalperStrategy:
         self.z_max = config_gold.Z_SCORE_PULLBACK_MAX
         self.min_wick_ratio = getattr(config_gold, "MIN_WICK_PERCENT", 15.0) / 100.0
         self.liquidity_engine = GoldLiquidityEngine(sweep_min_usd=0.20, min_rejection_wick=self.min_wick_ratio)
-        self.min_confluence_threshold = 75  # Minimum score out of 100 to trigger a trade
+        self.min_confluence_threshold = 70  # Confluence threshold aligned with ML validation
+        self.ml_engine = GoldMLProbabilityEngine(
+            min_p_win=0.55,
+            min_ev_r=0.15,
+            sl_mult=config_gold.ATR_SL_MULTIPLIER,
+            tp_mult=config_gold.ATR_TP_MULTIPLIER
+        )
 
     def calculate_indicators(self, rates_data: Any) -> pd.DataFrame:
         """Calculates moving averages, RSI, ATR, ADX, CHOP, Z-score, VWAP, and Bollinger Bands."""
@@ -171,23 +178,80 @@ class GoldScalperStrategy:
         return "NEUTRAL"
 
     def analyze_m1_microstructure(self, m1_rates: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
-        """Analyzes latest M1 candles to verify micro displacement and rejection timing."""
-        if m1_rates is None or len(m1_rates) < 2:
-            return {"bullish_confirmed": True, "bearish_confirmed": True, "reason": "M1 omitted (default pass)"}
-        df_m1 = pd.DataFrame(m1_rates)
-        curr = df_m1.iloc[-1]
-        c, o, h, l = curr["close"], curr["open"], curr["high"], curr["low"]
-        rng = h - l + 1e-9
-        body_ratio = abs(c - o) / rng
-        lower_wick = (min(o, c) - l) / rng
-        upper_wick = (h - max(o, c)) / rng
+        """
+        Analyzes M1 candles for institutional Micro-Displacement and 5-Bar Micro-BOS.
+        1. Micro-Displacement: Range >= 1.25x rolling M1 ATR(10) with body ratio >= 45%.
+        2. Micro-BOS: Close breaks above prior 5 M1 bars' highest high (Bullish) or below lowest low (Bearish).
+        """
+        if m1_rates is None or len(m1_rates) < 8:
+            return {
+                "bullish_confirmed": True,
+                "bearish_confirmed": True,
+                "is_displaced": True,
+                "micro_bos_bull": False,
+                "micro_bos_bear": False,
+                "disp_ratio": 1.0,
+                "reason": "M1 omitted (default pass)"
+            }
 
-        bullish = bool((c > o and body_ratio >= 0.25) or (lower_wick >= 0.20))
-        bearish = bool((c < o and body_ratio >= 0.25) or (upper_wick >= 0.20))
+        df_m1 = pd.DataFrame(m1_rates)
+        h = df_m1["high"].to_numpy()
+        l = df_m1["low"].to_numpy()
+        c = df_m1["close"].to_numpy()
+        o = df_m1["open"].to_numpy()
+
+        # True Range on M1
+        tr1 = h[1:] - l[1:]
+        tr2 = np.abs(h[1:] - c[:-1])
+        tr3 = np.abs(l[1:] - c[:-1])
+        tr = np.maximum(tr1, np.maximum(tr2, tr3))
+        m1_atr = float(np.mean(tr[-10:])) if len(tr) >= 10 else float(np.mean(tr))
+        m1_atr = max(m1_atr, 0.10)
+
+        curr_c = c[-1]
+        curr_o = o[-1]
+        curr_h = h[-1]
+        curr_l = l[-1]
+        rng = curr_h - curr_l + 1e-9
+        body = abs(curr_c - curr_o)
+        body_ratio = body / rng
+        lower_wick = (min(curr_o, curr_c) - curr_l) / rng
+        upper_wick = (curr_h - max(curr_o, curr_c)) / rng
+
+        # Prior 5 M1 bars
+        lookback_bars = min(5, len(h) - 1)
+        prior_5_high = float(np.max(h[-lookback_bars - 1 : -1]))
+        prior_5_low = float(np.min(l[-lookback_bars - 1 : -1]))
+
+        disp_ratio = round(rng / m1_atr, 2)
+        is_displaced = bool((rng >= 1.25 * m1_atr) and (body_ratio >= 0.45))
+
+        # Micro Break of Structure (BOS)
+        micro_bos_bull = bool(curr_c > prior_5_high)
+        micro_bos_bear = bool(curr_c < prior_5_low)
+
+        # Bullish Confirmation: (Displacement + BOS + Green) OR (Absorption lower wick >= 25% + Green)
+        bullish_confirmed = bool(
+            (micro_bos_bull and curr_c > curr_o and body_ratio >= 0.40) or
+            (is_displaced and curr_c > curr_o and lower_wick >= 0.20) or
+            (curr_c > prior_5_high and lower_wick >= 0.25)
+        )
+
+        # Bearish Confirmation: (Displacement + BOS + Red) OR (Absorption upper wick >= 25% + Red)
+        bearish_confirmed = bool(
+            (micro_bos_bear and curr_c < curr_o and body_ratio >= 0.40) or
+            (is_displaced and curr_c < curr_o and upper_wick >= 0.20) or
+            (curr_c < prior_5_low and upper_wick >= 0.25)
+        )
+
         return {
-            "bullish_confirmed": bullish,
-            "bearish_confirmed": bearish,
-            "reason": f"M1: Bull={bullish}, Bear={bearish}"
+            "bullish_confirmed": bullish_confirmed,
+            "bearish_confirmed": bearish_confirmed,
+            "is_displaced": is_displaced,
+            "micro_bos_bull": micro_bos_bull,
+            "micro_bos_bear": micro_bos_bear,
+            "disp_ratio": disp_ratio,
+            "reason": f"M1: Disp={disp_ratio:.1f}x, BOS_Bull={micro_bos_bull}, BOS_Bear={micro_bos_bear}"
         }
 
     def analyze(
@@ -275,11 +339,27 @@ class GoldScalperStrategy:
         # -------------------------------------------------------------
         # STRICT "DO NOT TRADE" SAFETY GATES
         # -------------------------------------------------------------
-        # Gate 1: Session Gate (08:00 to 17:00 UTC)
+        # Gate 1: Dual-Wave Institutional Liquidity Session Gate
         if config_gold.AVOID_ASIAN_SESSION:
-            start_h = getattr(config_gold, "SESSION_START_HOUR_UTC", 8)
-            end_h = getattr(config_gold, "SESSION_END_HOUR_UTC", 17)
-            if hour < start_h or hour >= end_h:
+            dec_hour = hour + (now_utc.minute / 60.0)
+            w1_start = getattr(config_gold, "WAVE_1_START_HOUR_UTC", 8.0)
+            w1_end = getattr(config_gold, "WAVE_1_END_HOUR_UTC", 11.5)
+            w2_start = getattr(config_gold, "WAVE_2_START_HOUR_UTC", 13.0)
+            w2_end = getattr(config_gold, "WAVE_2_END_HOUR_UTC", 17.0)
+            avoid_lull = getattr(config_gold, "AVOID_MIDDAY_LULL", True)
+
+            if avoid_lull and (w1_end <= dec_hour < w2_start):
+                return {
+                    "signal": "HOLD",
+                    "confidence": 0.0,
+                    "setup": "DO_NOT_TRADE_MIDDAY_LULL",
+                    "grade": "NONE",
+                    "regime": regime,
+                    "confluence_score": 0,
+                    "reason": f"Midday Lull Gate: Bank lunch pause ({w1_end:04.1f} - {w2_start:04.1f} UTC) avoids dead chop.",
+                    "metrics": metrics
+                }
+            elif not ((w1_start <= dec_hour < w1_end) or (w2_start <= dec_hour < w2_end)):
                 return {
                     "signal": "HOLD",
                     "confidence": 0.0,
@@ -287,7 +367,7 @@ class GoldScalperStrategy:
                     "grade": "NONE",
                     "regime": regime,
                     "confluence_score": 0,
-                    "reason": f"Session Gate: Outside active London/NY hours ({start_h:02d}:00 - {end_h:02d}:00 UTC).",
+                    "reason": f"Session Gate: Outside active London/NY waves (08:00-11:30 or 13:00-17:00 UTC).",
                     "metrics": metrics
                 }
 
@@ -406,17 +486,13 @@ class GoldScalperStrategy:
         # --- 8. VOLUME CONFIRMATION (Max 10 pts) ---
         vol_confirmed = 10 if vol_ratio >= 1.10 else (5 if vol_ratio >= 0.90 else 0)
 
-        # --- 9. M1 MICRO TIMING CONFIRMATION (Max 10 pts) ---
-        m1_buy = 10 if m1_timing.get("bullish_confirmed") else 0
-        m1_sell = 10 if m1_timing.get("bearish_confirmed") else 0
+        # --- 9. M1 MICRO TIMING CONFIRMATION (Max 15 pts) ---
+        m1_buy = 15 if m1_timing.get("bullish_confirmed") else (5 if m1_timing.get("is_displaced") else 0)
+        m1_sell = 15 if m1_timing.get("bearish_confirmed") else (5 if m1_timing.get("is_displaced") else 0)
 
-        # --- 10. SPREAD / VOLATILITY SAFETY (Max 5 pts) ---
-        spread_pts_val = 5  # Verified safe by order manager
-
-        # Calculate Combined Scores
-        # Note: Setups 1, 2, 3, 5 are primary drivers. Points stack based on confluence.
-        buy_score = max(sweep_pts_buy, pullback_buy, retest_buy, vwap_mr_buy) + mss_pts_buy + fvg_buy + macro_buy + vol_confirmed + m1_buy + spread_pts_val
-        sell_score = max(sweep_pts_sell, pullback_sell, retest_sell, vwap_mr_sell) + mss_pts_sell + fvg_sell + macro_sell + vol_confirmed + m1_sell + spread_pts_val
+        # Calculate Pure Alpha Confluence Scores (No synthetic spread bonus points)
+        buy_score = max(sweep_pts_buy, pullback_buy, retest_buy, vwap_mr_buy) + mss_pts_buy + fvg_buy + macro_buy + vol_confirmed + m1_buy
+        sell_score = max(sweep_pts_sell, pullback_sell, retest_sell, vwap_mr_sell) + mss_pts_sell + fvg_sell + macro_sell + vol_confirmed + m1_sell
 
         # Bound scores to 100
         buy_score = min(100, buy_score)
@@ -428,15 +504,46 @@ class GoldScalperStrategy:
         if z_score <= -self.z_max:
             sell_score = 0
 
-        # Decision Threshold Logic (A+ >= 80, A >= 75)
+        # --- ML PROBABILISTIC & EXPECTED VALUE EVALUATION ---
+        buy_features = {
+            "core_setup_pts": max(sweep_pts_buy, pullback_buy, retest_buy, vwap_mr_buy),
+            "mss_pts": mss_pts_buy,
+            "fvg_pts": fvg_buy,
+            "h1_macro_pts": macro_buy,
+            "vol_ratio": vol_ratio,
+            "m1_disp": m1_timing.get("is_displaced", False),
+            "m1_bos": m1_timing.get("micro_bos_bull", False),
+            "chop": chop_val,
+            "adx": adx_val,
+            "z_score": z_score,
+            "wick_ratio": lower_wick_ratio
+        }
+        sell_features = {
+            "core_setup_pts": max(sweep_pts_sell, pullback_sell, retest_sell, vwap_mr_sell),
+            "mss_pts": mss_pts_sell,
+            "fvg_pts": fvg_sell,
+            "h1_macro_pts": macro_sell,
+            "vol_ratio": vol_ratio,
+            "m1_disp": m1_timing.get("is_displaced", False),
+            "m1_bos": m1_timing.get("micro_bos_bear", False),
+            "chop": chop_val,
+            "adx": adx_val,
+            "z_score": z_score,
+            "wick_ratio": upper_wick_ratio
+        }
+
+        ml_buy = self.ml_engine.evaluate_expectancy(buy_features, spread_usd=0.24, atr_usd=atr_val)
+        ml_sell = self.ml_engine.evaluate_expectancy(sell_features, spread_usd=0.24, atr_usd=atr_val)
+
+        # Decision Threshold Logic: Confluence Score >= threshold AND ML Positive Expected Value
         final_signal = "HOLD"
         final_score = 0
         final_grade = "NONE"
 
-        if buy_score >= self.min_confluence_threshold and buy_score > sell_score:
+        if buy_score >= self.min_confluence_threshold and ml_buy["trade_valid"] and buy_score > sell_score:
             final_signal = "BUY"
             final_score = buy_score
-            final_grade = "A+" if buy_score >= 80 else "A"
+            final_grade = ml_buy["grade"]
             score_breakdown = {
                 "core_setup": max(sweep_pts_buy, pullback_buy, retest_buy, vwap_mr_buy),
                 "mss": mss_pts_buy,
@@ -444,12 +551,13 @@ class GoldScalperStrategy:
                 "h1_macro": macro_buy,
                 "volume": vol_confirmed,
                 "m1_timing": m1_buy,
-                "spread_safety": spread_pts_val
+                "ml_probability": ml_buy["win_probability_pct"],
+                "expected_value_r": ml_buy["expected_value_r"]
             }
-        elif sell_score >= self.min_confluence_threshold and sell_score > buy_score:
+        elif sell_score >= self.min_confluence_threshold and ml_sell["trade_valid"] and sell_score > buy_score:
             final_signal = "SELL"
             final_score = sell_score
-            final_grade = "A+" if sell_score >= 80 else "A"
+            final_grade = ml_sell["grade"]
             score_breakdown = {
                 "core_setup": max(sweep_pts_sell, pullback_sell, retest_sell, vwap_mr_sell),
                 "mss": mss_pts_sell,
@@ -457,24 +565,31 @@ class GoldScalperStrategy:
                 "h1_macro": macro_sell,
                 "volume": vol_confirmed,
                 "m1_timing": m1_sell,
-                "spread_safety": spread_pts_val
+                "ml_probability": ml_sell["win_probability_pct"],
+                "expected_value_r": ml_sell["expected_value_r"]
             }
         else:
             final_score = max(buy_score, sell_score)
-            final_grade = "B" if final_score >= 60 else "C"
+            active_ml = ml_buy if buy_score >= sell_score else ml_sell
+            final_grade = active_ml["grade"]
+
+        active_ml = ml_buy if buy_score >= sell_score else ml_sell
+        metrics["ml"] = active_ml
 
         reason_str = (
-            f"Gold {final_signal} [{final_grade} | Score: {final_score}/100 | {detected_setup}]: "
+            f"Gold {final_signal} [{final_grade} | Score: {final_score}/100 | {detected_setup} | "
+            f"ML: {active_ml['win_probability_pct']}% EV={active_ml['expected_value_r']:+.2f}R]: "
             f"Regime={regime}, H1={h1_trend}, Vol={vol_ratio:.1f}x, CHOP={chop_val:.1f}, Z={z_score:+.2f}."
         )
 
         return {
             "signal": final_signal,
-            "confidence": round(final_score / 100.0, 4),
+            "confidence": round(active_ml["p_win"], 4),
             "setup": detected_setup,
             "grade": final_grade,
             "regime": regime,
             "confluence_score": final_score,
+            "ml_expectancy": active_ml,
             "score_breakdown": score_breakdown,
             "reason": reason_str,
             "metrics": metrics
