@@ -36,7 +36,7 @@ class GoldScalperStrategy:
         self.z_max = config_gold.Z_SCORE_PULLBACK_MAX
         self.min_wick_ratio = getattr(config_gold, "MIN_WICK_PERCENT", 15.0) / 100.0
         self.liquidity_engine = GoldLiquidityEngine(sweep_min_usd=0.20, min_rejection_wick=self.min_wick_ratio)
-        self.min_confluence_threshold = 70  # Confluence threshold aligned with ML validation
+        self.min_confluence_threshold = 65  # Confluence threshold aligned with ML validation (Grade B+ baseline)
         self.ml_engine = GoldMLProbabilityEngine(
             min_p_win=0.55,
             min_ev_r=0.15,
@@ -258,10 +258,11 @@ class GoldScalperStrategy:
         self,
         m5_rates: List[Dict[str, Any]],
         h1_rates: Optional[List[Dict[str, Any]]] = None,
-        m1_rates: Optional[List[Dict[str, Any]]] = None
+        m1_rates: Optional[List[Dict[str, Any]]] = None,
+        spread_usd: float = 0.24
     ) -> Dict[str, Any]:
         """
-        Executes Institutional Multi-Strategy Evaluation on Gold with 100-Point Confluence Scoring.
+        Executes Institutional Multi-Strategy Evaluation on Gold with 100-Point Confluence Scoring and ML Expectancy.
         """
         df = self.calculate_indicators(m5_rates)
         if df.empty or len(df) < self.ema_trend + 5:
@@ -392,15 +393,15 @@ class GoldScalperStrategy:
         score_breakdown: Dict[str, Any] = {}
         detected_setup = "NONE"
 
-        # --- 1. LIQUIDITY SWEEP EVALUATION (Max 25 pts) ---
+        # --- 1. LIQUIDITY SWEEP EVALUATION (Max 35 pts) ---
         sweep_pts_buy = 0
         sweep_pts_sell = 0
         if sweep_data.get("swept"):
             if sweep_data.get("type") == "BULLISH_SWEEP":
-                sweep_pts_buy = 25
+                sweep_pts_buy = 35
                 detected_setup = "SETUP_1_SWEEP_MSS"
             elif sweep_data.get("type") == "BEARISH_SWEEP":
-                sweep_pts_sell = 25
+                sweep_pts_sell = 35
                 detected_setup = "SETUP_1_SWEEP_MSS"
 
         # --- 2. MARKET STRUCTURE SHIFT (MSS) (Max 20 pts) ---
@@ -416,53 +417,53 @@ class GoldScalperStrategy:
                 if detected_setup == "NONE":
                     detected_setup = "SETUP_1_SWEEP_MSS"
 
-        # --- 3. TREND PULLBACK (Setup 2) (Max 25 pts) ---
+        # --- 3. TREND PULLBACK (Setup 2) (Max 35 pts) ---
         pullback_buy = 0
         pullback_sell = 0
         if "TRENDING" in regime:
             # Bullish EMA pullback
             if ema_f > ema_s and close >= ema_t * 0.9995:
                 if (low <= ema_f * 1.0005 or low <= ema_s * 1.0008) and (lower_wick_ratio >= self.min_wick_ratio or close >= open_price):
-                    pullback_buy = 25
+                    pullback_buy = 35
                     if detected_setup == "NONE":
                         detected_setup = "SETUP_2_TREND_PULLBACK"
 
             # Bearish EMA pullback
             if ema_f < ema_s and close <= ema_t * 1.0005:
                 if (high >= ema_f * 0.9995 or high >= ema_s * 0.9992) and (upper_wick_ratio >= self.min_wick_ratio or close <= open_price):
-                    pullback_sell = 25
+                    pullback_sell = 35
                     if detected_setup == "NONE":
                         detected_setup = "SETUP_2_TREND_PULLBACK"
 
-        # --- 4. BREAKOUT + RETEST (Setup 3) (Max 20 pts) ---
+        # --- 4. BREAKOUT + RETEST (Setup 3) (Max 30 pts) ---
         retest_buy = 0
         retest_sell = 0
         asian_high = session_levels.get("asian_high", 0.0)
         asian_low = session_levels.get("asian_low", 0.0)
         if asian_high > 0 and close > asian_high and abs(low - asian_high) <= (atr_val * 0.40):
             if lower_wick_ratio >= 0.15:
-                retest_buy = 20
+                retest_buy = 30
                 if detected_setup == "NONE":
                     detected_setup = "SETUP_3_BREAKOUT_RETEST"
         if asian_low > 0 and close < asian_low and abs(high - asian_low) <= (atr_val * 0.40):
             if upper_wick_ratio >= 0.15:
-                retest_sell = 20
+                retest_sell = 30
                 if detected_setup == "NONE":
                     detected_setup = "SETUP_3_BREAKOUT_RETEST"
 
-        # --- 5. VWAP RANGE MEAN REVERSION (Setup 5) (Max 25 pts) ---
+        # --- 5. VWAP RANGE MEAN REVERSION (Setup 5) (Max 35 pts) ---
         vwap_mr_buy = 0
         vwap_mr_sell = 0
         if regime == "RANGING_CONSOLIDATION":
             # Oversold at lower boundary -> Mean revert to VWAP
             if close <= bb_lower or z_score <= -1.4:
                 if lower_wick_ratio >= 0.20 and close < vwap_val:
-                    vwap_mr_buy = 25
+                    vwap_mr_buy = 35
                     detected_setup = "SETUP_5_VWAP_MEAN_REVERSION"
             # Overbought at upper boundary -> Mean revert to VWAP
             elif close >= bb_upper or z_score >= 1.4:
                 if upper_wick_ratio >= 0.20 and close > vwap_val:
-                    vwap_mr_sell = 25
+                    vwap_mr_sell = 35
                     detected_setup = "SETUP_5_VWAP_MEAN_REVERSION"
 
         # --- 6. FAIR VALUE GAP (FVG) CONFLUENCE (Max 15 pts) ---
@@ -532,8 +533,8 @@ class GoldScalperStrategy:
             "wick_ratio": upper_wick_ratio
         }
 
-        ml_buy = self.ml_engine.evaluate_expectancy(buy_features, spread_usd=0.24, atr_usd=atr_val)
-        ml_sell = self.ml_engine.evaluate_expectancy(sell_features, spread_usd=0.24, atr_usd=atr_val)
+        ml_buy = self.ml_engine.evaluate_expectancy(buy_features, spread_usd=spread_usd, atr_usd=atr_val)
+        ml_sell = self.ml_engine.evaluate_expectancy(sell_features, spread_usd=spread_usd, atr_usd=atr_val)
 
         # Decision Threshold Logic: Confluence Score >= threshold AND ML Positive Expected Value
         final_signal = "HOLD"

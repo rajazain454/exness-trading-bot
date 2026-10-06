@@ -331,8 +331,10 @@ class GoldScalperBot:
 
                     current_m5_bar_time = m5_rates[-1]["time"] if m5_rates is not None and len(m5_rates) > 0 else 0
 
-                    # 2. Run analysis with M1 confirmation
-                    analysis = self.strategy.analyze(m5_rates, h1_rates, m1_rates)
+                    # 2. Run analysis with M1 confirmation and dynamic live spread
+                    tick_now = mt5.symbol_info_tick(self.symbol)
+                    live_spread = round(tick_now.ask - tick_now.bid, 2) if tick_now else 0.24
+                    analysis = self.strategy.analyze(m5_rates, h1_rates, m1_rates, spread_usd=live_spread)
                     sig = analysis.get("signal", "HOLD")
                     metrics = analysis.get("metrics", {})
                     atr_val = metrics.get("atr", 2.50)
