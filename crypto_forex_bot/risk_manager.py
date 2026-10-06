@@ -26,10 +26,15 @@ class RiskManager:
     - Anti-Revenge Consecutive Loss Cooldown
     """
 
-    def __init__(self, connector, notifier: Optional[DiscordNotifier] = None):
+    def __init__(
+        self,
+        connector,
+        notifier: Optional[DiscordNotifier] = None,
+        journal: Optional[TradeJournal] = None,
+    ):
         self.connector = connector
         self.notifier = notifier or DiscordNotifier()
-        self.journal = TradeJournal()
+        self.journal = journal if journal is not None else TradeJournal()
         self.news_filter = EconomicNewsFilter(
             pre_buffer_mins=config.NEWS_PRE_BUFFER_MINS,
             post_buffer_mins=config.NEWS_POST_BUFFER_MINS

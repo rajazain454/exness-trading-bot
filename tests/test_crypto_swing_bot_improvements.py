@@ -153,9 +153,8 @@ class TestCryptoSwingBotImprovements(unittest.TestCase):
             self.assertEqual(crypto_stats["avg_win_usd"], 6.00)
 
             # Test RiskManager lot sizing with this journal
-            rm = RiskManager(self.connector)
-            rm.journal = journal
-            
+            rm = RiskManager(self.connector, journal=journal)
+
             lot_forex = rm.calculate_lot_size(equity=100.0, symbol="EURUSDm", sl_pips=15.0)
             lot_crypto = rm.calculate_lot_size(equity=100.0, symbol="BTCUSDm", sl_pips=15.0)
             self.assertGreaterEqual(lot_forex, 0.01)

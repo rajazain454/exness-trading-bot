@@ -31,11 +31,11 @@ class BaseOrderManager:
         deviation_points: int = 20,
     ):
         self.connector = connector
-        self.magic_number = int(magic_number)
+        self.magic_number = magic_number
         self.notifier = notifier
         self.journal = journal
         self.risk_manager = risk_manager
-        self.deviation_points = int(deviation_points)
+        self.deviation_points = deviation_points
         self.tracked_positions: Dict[int, Dict[str, Any]] = {}
 
     def get_filling_mode(self, symbol: str) -> int:
