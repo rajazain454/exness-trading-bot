@@ -161,9 +161,9 @@ class GoldScalperBot:
         layout = Layout()
         layout.split_column(
             Layout(name="header", size=3),
-            Layout(name="main", size=10),
-            Layout(name="positions", size=6),
-            Layout(name="logs", size=8),
+            Layout(name="main", size=13),
+            Layout(name="positions", size=5),
+            Layout(name="logs", size=6),
         )
 
         acc = mt5.account_info()

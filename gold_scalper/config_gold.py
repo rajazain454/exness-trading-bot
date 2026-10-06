@@ -78,7 +78,7 @@ TRAILING_STEP_USD = 0.25     # Ratchet step: minimum $0.25 advance before updati
 # ==========================================
 # FILTERS & SAFETY GUARDS
 # ==========================================
-MAX_SPREAD_POINTS = 200      # Max allowed spread in points ($0.20 on Gold - strict stress-test limit)
+MAX_SPREAD_POINTS = 300      # Max allowed spread in points ($0.30 on Gold - accommodates Exness standard spread)
 MIN_WICK_PERCENT = 15.0      # Minimum absorption wick % required (Walk-Forward Champion)
 MAX_HOLD_BARS_M5 = 24        # Time exit: close after 24 M5 bars / 2 hours
 MAX_CHOP_INDEX = 50.0        # Choppiness index reference (Walk-Forward floor)
