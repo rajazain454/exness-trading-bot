@@ -377,6 +377,8 @@ class BaseOrderManager:
 
             if self.risk_manager and hasattr(self.risk_manager, "register_trade_outcome"):
                 self.risk_manager.register_trade_outcome(pnl >= 0)
+            if self.risk_manager and hasattr(self.risk_manager, "register_symbol_exit"):
+                self.risk_manager.register_symbol_exit(trade_sym, cooldown_minutes=10)
 
             try:
                 if self.notifier and getattr(self.notifier, "enabled", False):

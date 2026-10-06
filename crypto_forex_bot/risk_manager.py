@@ -39,6 +39,7 @@ class RiskManager:
         self.daily_peak_equity = 0.0
         self.consecutive_losses = 0
         self.cooldown_until: Optional[datetime] = None
+        self.symbol_cooldowns: Dict[str, datetime] = {}
         self.spread_history: Dict[str, List[float]] = {}
         self._sync_daily_balance()
 
@@ -108,8 +109,27 @@ class RiskManager:
                 logger.info("Consecutive loss cooldown expired. Normal trading resumed.")
         return True, "Cooldown clear"
 
+    def register_symbol_exit(self, symbol: str, cooldown_minutes: int = 10):
+        """Sets a post-exit cooldown on the specific symbol (2 completed M5 candles = 10 mins)."""
+        if symbol:
+            mins = getattr(config, "SAME_SYMBOL_COOLDOWN_MINUTES", cooldown_minutes)
+            self.symbol_cooldowns[symbol] = datetime.now(timezone.utc) + timedelta(minutes=mins)
+            logger.info(f"Post-Exit Cooldown: {symbol} paused for {mins}m (2 candles) until {self.symbol_cooldowns[symbol].strftime('%H:%M:%S UTC')}")
+
+    def check_symbol_cooldown(self, symbol: str) -> Tuple[bool, str]:
+        """Verifies if the specific symbol is cooling down from a recent exit to prevent re-entry top/bottom chop."""
+        if symbol and symbol in self.symbol_cooldowns:
+            now_utc = datetime.now(timezone.utc)
+            expiry = self.symbol_cooldowns[symbol]
+            if now_utc < expiry:
+                remaining_mins = max(1, int((expiry - now_utc).total_seconds() / 60))
+                return False, f"Post-exit cooldown active for {symbol} ({remaining_mins}m remaining, 2-candle rule). Preventing top/bottom re-entry chop."
+            else:
+                del self.symbol_cooldowns[symbol]
+        return True, "Symbol cooldown clear"
+
     def check_trading_session(self, symbol: str = "") -> Tuple[bool, str]:
-        """Verifies active liquidity sessions and rollover blackout."""
+        """Verifies active liquidity sessions, midday European lunch lull, and rollover blackout."""
         if not config.SESSION_FILTER_ENABLED:
             return True, "Session filter disabled"
 
@@ -120,6 +140,11 @@ class RiskManager:
         now_utc = datetime.now(timezone.utc)
         curr_hour = now_utc.hour
         curr_min = now_utc.minute
+
+        # Midday European Bank Lunch Lull (11:30 - 13:00 UTC) - Forex only
+        if getattr(config, "MIDDAY_LULL_FILTER_ENABLED", True):
+            if (curr_hour == 11 and curr_min >= 30) or (curr_hour == 12):
+                return False, f"Midday Lull ({curr_hour:02d}:{curr_min:02d} UTC): Low institutional liquidity / bank lunch (11:30-13:00 UTC). Forex paused."
 
         r_start_h, r_start_m = map(int, config.ROLLOVER_BLACKOUT_START.split(":"))
         r_end_h, r_end_m = map(int, config.ROLLOVER_BLACKOUT_END.split(":"))
@@ -238,6 +263,10 @@ class RiskManager:
         cd_ok, cd_reason = self.check_cooldown()
         if not cd_ok:
             return False, cd_reason
+
+        sym_cd_ok, sym_cd_reason = self.check_symbol_cooldown(symbol)
+        if not sym_cd_ok:
+            return False, sym_cd_reason
 
         fri_ok, fri_reason = self.check_friday_cutoff(symbol)
         if not fri_ok:

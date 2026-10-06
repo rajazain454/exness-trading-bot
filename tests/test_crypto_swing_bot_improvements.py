@@ -201,6 +201,39 @@ class TestCryptoSwingBotImprovements(unittest.TestCase):
         else:
             print(f"  [PASS] Test 5: Quant filters evaluated candidate: {res.get('reason')}")
 
+    def test_post_exit_2_candle_symbol_cooldown(self):
+        """Verify that a symbol is paused for 2 candles (10 mins) after an exit to prevent re-entry chop."""
+        rm = RiskManager(self.connector)
+        rm.register_symbol_exit("EURUSDm", cooldown_minutes=10)
+
+        # EURUSDm should be blocked
+        ok_eur, reason_eur = rm.check_symbol_cooldown("EURUSDm")
+        self.assertFalse(ok_eur)
+        self.assertIn("2-candle rule", reason_eur)
+
+        # Other symbols like GBPUSDm or BTCUSDm should NOT be blocked
+        ok_gbp, _ = rm.check_symbol_cooldown("GBPUSDm")
+        ok_btc, _ = rm.check_symbol_cooldown("BTCUSDm")
+        self.assertTrue(ok_gbp)
+        self.assertTrue(ok_btc)
+        print("  [PASS] Test 6: Post-exit 2-candle symbol cooldown verified (EURUSDm paused, GBP/BTC clear)")
+
+    def test_midday_lull_forex_gate(self):
+        """Verify that midday European lunch lull pauses Forex but exempts Crypto."""
+        rm = RiskManager(self.connector)
+        fake_lunch_utc = datetime(2026, 10, 6, 12, 15, 0, tzinfo=timezone.utc)  # 12:15 UTC
+
+        with patch("crypto_forex_bot.risk_manager.datetime") as mock_dt:
+            mock_dt.now.return_value = fake_lunch_utc
+            ok_forex, reason_forex = rm.check_trading_session("EURUSDm")
+            ok_crypto, reason_crypto = rm.check_trading_session("BTCUSDm")
+
+        self.assertFalse(ok_forex)
+        self.assertIn("Midday Lull", reason_forex)
+        self.assertTrue(ok_crypto)
+        self.assertIn("24/7", reason_crypto)
+        print("  [PASS] Test 7: Midday lunch lull correctly paused Forex and exempted 24/7 Crypto")
+
 
 if __name__ == "__main__":
     unittest.main()

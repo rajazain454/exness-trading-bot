@@ -111,8 +111,14 @@ ROLLING_SPREAD_WINDOW = 30
 # SMART PARTIAL PROFIT TAKING (SCALE-OUT)
 # ==========================================
 ENABLE_PARTIAL_TP = True
-PARTIAL_TP_PIPS = 15.0
+PARTIAL_TP_PIPS = 8.0
 PARTIAL_CLOSE_RATIO = 0.50
+
+# ==========================================
+# POST-EXIT COOLDOWN (2 CANDLES = 10 MINS)
+# ==========================================
+SAME_SYMBOL_COOLDOWN_MINUTES = 10     # 2 completed M5 candles before re-entering same symbol
+MIDDAY_LULL_FILTER_ENABLED = True      # Pause Forex between 11:30 and 13:00 UTC (Bank Lunch)
 
 # ==========================================
 # RISK MANAGEMENT & AUTO-COMPOUNDING
@@ -140,11 +146,11 @@ MAX_SL_PIPS = 20.0
 STATIC_STOP_LOSS_PIPS = 15.0
 STATIC_TAKE_PROFIT_PIPS = 25.0
 
-BREAKEVEN_TRIGGER_PIPS = 10.0
+BREAKEVEN_TRIGGER_PIPS = 5.0
 BREAKEVEN_OFFSET_PIPS = 1.0
 TRAILING_STOP_ENABLED = True
-TRAILING_DISTANCE_PIPS = 12.0
-TRAILING_STEP_PIPS = 3.0
+TRAILING_DISTANCE_PIPS = 10.0
+TRAILING_STEP_PIPS = 2.5
 
 # ==========================================
 # SESSION & ROLLOVER FILTER (UTC)

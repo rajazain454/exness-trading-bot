@@ -173,11 +173,11 @@ class OrderManager(BaseOrderManager):
             # Derive dynamic targets from actual initial stop distance if available
             risk_dist = abs(pos.price_open - pos.sl) if pos.sl > 0 else 0.0
             if risk_dist > 0:
-                be_trigger = risk_dist * 0.75
+                be_trigger = risk_dist * 0.50
                 be_offset = risk_dist * 0.10
                 trail_dist = risk_dist
                 trail_step = risk_dist * 0.20
-                partial_tp_dist = risk_dist * 1.0
+                partial_tp_dist = risk_dist * 0.80
             else:
                 be_trigger = config.BREAKEVEN_TRIGGER_PIPS * pip_size
                 be_offset = config.BREAKEVEN_OFFSET_PIPS * pip_size
