@@ -76,6 +76,7 @@ class GoldOrderManager(BaseOrderManager):
             self.last_trail_price.pop(t, None)
             if current_m5_bar_time > 0:
                 self.last_exit_m5_bar_time = current_m5_bar_time
+            self.last_exit_outcome = ct.get("outcome", "WIN")
 
         # 2. Track all active positions in tracked_positions with crash-resilient BE recovery
         for p in active_positions:
@@ -211,13 +212,16 @@ class GoldOrderManager(BaseOrderManager):
         elif config_gold.ENABLE_TRAILING_STOP and ticket in self.active_be_locked:
             if is_buy:
                 target_sl = round(current_price - trail_dist, digits)
-                last_sl = max(cur_sl, self.trailing_sl.get(ticket, cur_sl))
-                last_price = self.last_trail_price.get(ticket, entry)
+                stored_sl = self.trailing_sl.get(ticket)
+                last_sl = max(cur_sl, stored_sl) if stored_sl is not None else cur_sl
+                last_price = self.last_trail_price.get(ticket) or entry
                 can_advance = (current_price > last_price + trail_step) and (target_sl >= last_sl + trail_step)
             else:
                 target_sl = round(current_price + trail_dist, digits)
-                last_sl = min(cur_sl, self.trailing_sl.get(ticket, cur_sl)) if cur_sl > 0 else self.trailing_sl.get(ticket, target_sl + 1.0)
-                last_price = self.last_trail_price.get(ticket, entry)
+                stored_sl = self.trailing_sl.get(ticket)
+                fallback_sl = cur_sl if cur_sl > 0 else (target_sl + 1.0)
+                last_sl = min(cur_sl, stored_sl) if (stored_sl is not None and cur_sl > 0) else fallback_sl
+                last_price = self.last_trail_price.get(ticket) or entry
                 can_advance = (current_price < last_price - trail_step) and (target_sl <= last_sl - trail_step)
 
             if can_advance:
@@ -265,8 +269,11 @@ class GoldOrderManager(BaseOrderManager):
         entry = tick.ask if sig == "BUY" else tick.bid
         stop_dist = atr_val * config_gold.ATR_SL_MULTIPLIER
 
-        # Dynamic 1:2 R:R Take Profit (Aligned with EA InpAtrMultiplierTP)
-        tp_dist = round(stop_dist * config_gold.ATR_TP_MULTIPLIER, digits)
+        # Dynamic Scalp Take Profit with hard $3.00 - $3.50 cap
+        raw_tp_dist = stop_dist * config_gold.ATR_TP_MULTIPLIER
+        max_tp_cap = getattr(config_gold, "MAX_TP_DOLLARS", 3.50)
+        min_tp_floor = getattr(config_gold, "MIN_TP_DOLLARS", 2.00)
+        tp_dist = round(min(max_tp_cap, max(min_tp_floor, raw_tp_dist)), digits)
 
         sl = round(entry - stop_dist if sig == "BUY" else entry + stop_dist, digits)
         tp = round(entry + tp_dist if sig == "BUY" else entry - tp_dist, digits)

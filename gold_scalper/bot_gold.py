@@ -112,6 +112,10 @@ class GoldScalperBot:
     def last_exit_m5_bar_time(self, val):
         self.order_manager.last_exit_m5_bar_time = val
 
+    @property
+    def last_exit_outcome(self):
+        return getattr(self.order_manager, "last_exit_outcome", None)
+
     def get_filling_mode(self, symbol: str) -> int:
         """Determines the appropriate order filling mode supported by the broker for the symbol."""
         return self.order_manager.get_filling_mode(symbol)
@@ -334,6 +338,7 @@ class GoldScalperBot:
                     # 2. Run analysis with M1 confirmation and dynamic live spread
                     tick_now = mt5.symbol_info_tick(self.symbol)
                     live_spread = round(tick_now.ask - tick_now.bid, 2) if tick_now else 0.24
+                    assert m5_rates is not None
                     analysis = self.strategy.analyze(m5_rates, h1_rates, m1_rates, spread_usd=live_spread)
                     sig = analysis.get("signal", "HOLD")
                     metrics = analysis.get("metrics", {})
@@ -343,13 +348,26 @@ class GoldScalperBot:
                     self.manage_gold_positions(atr_val, current_m5_bar_time)
                     active_positions = self.get_gold_positions()
 
-                    # 4. Check 1 Full New M5 Bar Cooldown
+                    # 4. Check Cooldown (1 candle after TP/Win, 2 candles after SL/Loss)
                     cooldown_active = False
                     bars_remaining = 0.0
-                    cooldown_bars = getattr(config_gold, "BAR_COOLDOWN_M5_COUNT", 1)
                     if self.last_exit_m5_bar_time > 0 and current_m5_bar_time > 0:
                         bars_elapsed = (current_m5_bar_time - self.last_exit_m5_bar_time) / 300.0
-                        needed = (cooldown_bars + 1)
+                        last_outcome = self.last_exit_outcome
+                        if not last_outcome:
+                            try:
+                                row = self.journal._execute(
+                                    "SELECT outcome FROM trades WHERE symbol = ? AND exit_time IS NOT NULL ORDER BY id DESC LIMIT 1",
+                                    (self.symbol,),
+                                    fetch=True,
+                                    fetchall=False
+                                )
+                                last_outcome = row[0] if row else "WIN"
+                            except Exception:
+                                last_outcome = "WIN"
+
+                        cooldown_bars = getattr(config_gold, "COOLDOWN_BARS_AFTER_LOSS", 2) if last_outcome == "LOSS" else getattr(config_gold, "COOLDOWN_BARS_AFTER_WIN", 1)
+                        needed = max(1.0, float(cooldown_bars))
                         if bars_elapsed < needed:
                             cooldown_active = True
                             bars_remaining = needed - bars_elapsed

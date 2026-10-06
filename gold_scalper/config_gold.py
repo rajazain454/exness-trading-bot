@@ -66,16 +66,20 @@ RISK_PER_TRADE_PERCENT = 0.50 # Risk 0.50% equity per scalp (suitable for $25 - 
 MAX_OPEN_POSITIONS = 1       # Strict 1 position max at any time
 MAX_DAILY_LOSS_USD = 5.00    # Hard equity stop on a small account ($5.00)
 MAX_DAILY_TRADES = None      # No trade count limits (unlimited trades when valid setups occur)
-BAR_COOLDOWN_M5_COUNT = 3    # Cooldown: 3 bars (15 mins) pause after exit (halves max drawdown from 23R to 11R!)
+BAR_COOLDOWN_M5_COUNT = 1    # Default cooldown (1 completed M5 candle)
+COOLDOWN_BARS_AFTER_WIN = 1   # 1 M5 candle (5 mins) cooldown after TP / profitable exit
+COOLDOWN_BARS_AFTER_LOSS = 2  # 2 M5 candles (10 mins) cooldown after SL / loss
 CONSECUTIVE_LOSS_LIMIT = 3   # Circuit breaker: pause after 3 consecutive losses
 CONSECUTIVE_LOSS_COOLDOWN_BARS = 6 # 6 M5 bars (30 min) cooling period after circuit breaker
 
 # Dynamic ATR Stop Loss & Take Profit for Gold
 ATR_PERIOD = 14
 ATR_SL_MULTIPLIER = 1.3      # Stop Loss = 1.3 x ATR
-ATR_TP_MULTIPLIER = 1.8      # Take Profit = 1.8 x ATR
+ATR_TP_MULTIPLIER = 1.2      # Scalp Take Profit multiplier (quick profit banking)
+MAX_TP_DOLLARS = 3.50        # Hard cap on Take Profit: max $3.00 - $3.50 profit on 0.01 lot ($3.50 price distance)
+MIN_TP_DOLLARS = 2.00        # Minimum TP floor ($2.00 price distance)
 USE_PARTIAL_TP = True
-PARTIAL_TP_ATR_MULT = 1.1    # TP1 partial close at 1.1x ATR distance
+PARTIAL_TP_ATR_MULT = 0.8    # TP1 partial close at 0.8x ATR distance (~$1.50 - $2.00 to lock Break-Even early)
 PARTIAL_TP_RATIO = PARTIAL_TP_ATR_MULT # Backward-compatibility alias
 BREAK_EVEN_BUFFER_USD = 0.15 # Move SL to Entry + $0.15 when TP1 is banked
 BREAK_EVEN_BUFFER_PIPS = 1.5 # Legacy alias ($0.15 on Gold)
