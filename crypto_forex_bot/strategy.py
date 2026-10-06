@@ -113,7 +113,7 @@ class ForexConfluenceStrategy:
         df["chop"] = QuantitativeEngine.calculate_choppiness_index(high, low, close, period=14)
 
         # 3. Daily-Anchored Session VWAP
-        df["vwap"] = QuantitativeEngine.calculate_vwap(high, low, close, vol, datetimes=df["time"])
+        df["vwap"] = QuantitativeEngine.calculate_vwap(high, low, close, vol, datetimes=pd.Series(df["time"]))
 
         if symbol and rates_data is not None and len(rates_data) > 0:
             last_time = _extract_time(rates_data)
@@ -134,9 +134,19 @@ class ForexConfluenceStrategy:
         ema_50 = s_close.ewm(span=50, adjust=False).mean().iloc[-1] if len(s_close) >= 50 else ema_s
         close = s_close.iloc[-1]
 
-        if ema_f > ema_s and close > ema_s and close > (ema_50 * 0.999):
+        # H1 Institutional Volume Profile verification
+        vol_col = df_h1["tick_volume"] if "tick_volume" in df_h1.columns else (df_h1["volume"] if "volume" in df_h1.columns else None)
+        vol_ok = True
+        if vol_col is not None and len(vol_col) >= 20:
+            vol_s = pd.Series(vol_col, dtype=float)
+            vol_sma20 = float(vol_s.rolling(20).mean().iloc[-1])
+            # Suppress trend confirmation if H1 bar has severely depleted institutional volume
+            if vol_sma20 > 0 and float(vol_s.iloc[-1]) < (vol_sma20 * 0.35):
+                vol_ok = False
+
+        if vol_ok and ema_f > ema_s and close > ema_s and close > (ema_50 * 0.999):
             return "BULLISH", ema_f, ema_s
-        elif ema_f < ema_s and close < ema_s and close < (ema_50 * 1.001):
+        elif vol_ok and ema_f < ema_s and close < ema_s and close < (ema_50 * 1.001):
             return "BEARISH", ema_f, ema_s
         return "NEUTRAL", ema_f, ema_s
 
@@ -184,7 +194,7 @@ class ForexConfluenceStrategy:
         vwap_val = curr_candle["vwap"] if not np.isnan(curr_candle["vwap"]) else close
 
         # ATR Percentile Rank
-        atr_percentile = QuantitativeEngine.calculate_atr_percentile(df_m5["atr"])
+        atr_percentile = QuantitativeEngine.calculate_atr_percentile(pd.Series(df_m5["atr"], dtype=float))
 
         # Wick Calculations
         candle_range = high - low

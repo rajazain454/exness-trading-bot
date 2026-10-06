@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 import logging
 import config
 
@@ -72,7 +72,7 @@ class QuantitativeEngine:
         return pd.Series(chop, index=high.index).fillna(50.0)
 
     @staticmethod
-    def calculate_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, datetimes: pd.Series = None) -> pd.Series:
+    def calculate_vwap(high: pd.Series, low: pd.Series, close: pd.Series, volume: pd.Series, datetimes: Optional[pd.Series] = None) -> pd.Series:
         """
         Calculates Daily Anchored Volume-Weighted Average Price (VWAP).
         Resets at 00:00 UTC each day to represent true intraday institutional fair value.

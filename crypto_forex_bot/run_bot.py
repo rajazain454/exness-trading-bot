@@ -96,9 +96,14 @@ def main():
         elif choice == "4":
             view_journal()
         elif choice == "5":
-            from extreme_test import main as run_extreme_test
             try:
-                run_extreme_test()
+                import sys
+                test_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tests")
+                if test_dir not in sys.path:
+                    sys.path.append(test_dir)
+                import importlib
+                ext_module = importlib.import_module("extreme_test")
+                ext_module.main()
             except Exception as e:
                 console.print(f"[red]Extreme test error: {e}[/red]")
         elif choice == "6":
