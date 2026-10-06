@@ -97,7 +97,6 @@ def main():
             view_journal()
         elif choice == "5":
             try:
-                import sys
                 test_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tests")
                 if test_dir not in sys.path:
                     sys.path.append(test_dir)
@@ -114,7 +113,7 @@ def main():
                 console.print(f"[red]Training error: {e}[/red]")
         elif choice == "7":
             console.print("[cyan]Exiting Exness Trading Bot. Happy Trading![/cyan]")
-            sys.exit(0)
+            break
 
 if __name__ == "__main__":
     main()
