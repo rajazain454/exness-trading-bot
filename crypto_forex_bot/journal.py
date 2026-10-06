@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
@@ -13,16 +14,40 @@ class TradeJournal:
     Persistent SQLite Trade Journal.
     Logs every trade lifecycle event, entry, exit, hold duration,
     slippage, latency (ms), and calculates daily/weekly performance analytics.
+    Uses thread-safe persistent connection with WAL mode.
     """
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or DEFAULT_DB_PATH
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
         self._init_db()
 
-    def _execute(self, query: str, params: tuple = (), fetch: bool = False, fetchall: bool = True):
-        """Executes a query with strict resource disposal and connection closing."""
-        conn = sqlite3.connect(self.db_path, timeout=30.0)
+    def close(self):
+        """Closes the persistent SQLite connection cleanly."""
+        with self._lock:
+            conn = getattr(self, "_conn", None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+
+    def __del__(self):
+        """Cleanly releases connection when journal object is destroyed."""
         try:
+            self.close()
+        except Exception:
+            pass
+
+    def _execute(self, query: str, params: tuple = (), fetch: bool = False, fetchall: bool = True):
+        """Executes a query with thread-safety on persistent connection."""
+        with self._lock:
+            if getattr(self, "_conn", None) is None:
+                self._conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+            conn = self._conn
+            assert conn is not None
             cursor = conn.cursor()
             cursor.execute(query, params)
             if fetch:
@@ -31,8 +56,6 @@ class TradeJournal:
                 conn.commit()
                 res = None
             return res
-        finally:
-            conn.close()
 
     def _init_db(self):
         """Creates the trades table if it doesn't exist and migrates missing columns."""
@@ -78,7 +101,7 @@ class TradeJournal:
         lot = kwargs.get("lot_size", lot)
         now_str = datetime.now(timezone.utc).isoformat() + "Z"
         query = """
-            INSERT OR REPLACE INTO trades (ticket, symbol, signal, lot, entry_price, sl, tp, entry_time, latency_ms, slippage_pips)
+            INSERT OR IGNORE INTO trades (ticket, symbol, signal, lot, entry_price, sl, tp, entry_time, latency_ms, slippage_pips)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         self._execute(query, (ticket, symbol, signal, lot, entry_price, sl, tp, now_str, latency_ms, slippage_pips))
@@ -99,7 +122,7 @@ class TradeJournal:
         if row and row[0]:
             try:
                 entry_dt = datetime.fromisoformat(row[0].replace("Z", "+00:00"))
-                hold_minutes = int((datetime.now(entry_dt.tzinfo) - entry_dt).total_seconds() / 60)
+                hold_minutes = max(0, int((datetime.now(timezone.utc) - entry_dt).total_seconds() / 60))
             except Exception:
                 hold_minutes = 0
 
@@ -222,3 +245,21 @@ class TradeJournal:
             "avg_win_usd": round(avg_win, 2),
             "avg_loss_usd": round(avg_loss, 2)
         }
+
+    def backup_database(self, backup_dir: Optional[str] = None) -> Optional[str]:
+        """Creates a consistent online snapshot backup of the SQLite database."""
+        target_dir = backup_dir or os.path.join(os.path.dirname(self.db_path), "backups")
+        os.makedirs(target_dir, exist_ok=True)
+        date_str = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        backup_file = os.path.join(target_dir, f"trading_journal_{date_str}.db")
+        try:
+            with self._lock:
+                if getattr(self, "_conn", None):
+                    backup_conn = sqlite3.connect(backup_file)
+                    self._conn.backup(backup_conn)
+                    backup_conn.close()
+                    logger.info(f"Journal: Database backed up successfully to {backup_file}")
+                    return backup_file
+        except Exception as e:
+            logger.error(f"Journal: Failed to create database backup: {e}")
+            return None

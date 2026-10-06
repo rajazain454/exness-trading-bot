@@ -127,6 +127,29 @@ def health_check():
     }
 
 
+@app.get("/metrics")
+def get_metrics():
+    """Exports key operational and trading metrics for external monitoring."""
+    journal_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trading_journal.db")
+    stats = {}
+    if os.path.exists(journal_path):
+        try:
+            from journal import TradeJournal
+            j = TradeJournal(journal_path)
+            stats = j.get_all_time_stats()
+            j.close()
+        except Exception as e:
+            stats = {"error": str(e)}
+    return {
+        "status": "online",
+        "basket": config.SYMBOLS_BASKET,
+        "max_open_positions": config.MAX_OPEN_POSITIONS,
+        "max_daily_loss_usd": config.MAX_DAILY_LOSS_USD,
+        "stats": stats,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat()
+    }
+
+
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
     """

@@ -1,3 +1,5 @@
+import os
+import json
 import logging
 import requests
 from datetime import datetime, timezone, timedelta
@@ -13,7 +15,7 @@ class EconomicNewsFilter:
     """
 
     FEED_URL = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
-    CACHE_FILE = "news_calendar_cache.json"
+    CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news_calendar_cache.json")
 
     def __init__(self, pre_buffer_mins: int = 30, post_buffer_mins: int = 30):
         self.pre_buffer = timedelta(minutes=pre_buffer_mins)

@@ -1,3 +1,4 @@
+import time
 import logging
 import requests
 import queue
@@ -22,18 +23,34 @@ class DiscordNotifier:
             self._worker_thread.start()
 
     def _process_queue(self):
-        """Background worker thread draining the notification queue."""
+        """Background worker thread draining the notification queue with retry and backoff."""
         while not self._stop_event.is_set():
             try:
                 payload = self._queue.get(timeout=0.5)
-                try:
-                    res = requests.post(self.webhook_url, json=payload, timeout=6)
-                    if res.status_code not in [200, 204]:
-                        logger.warning(f"Discord returned HTTP status {res.status_code}")
-                except Exception as e:
-                    logger.warning(f"Failed to deliver Discord notification: {e}")
-                finally:
-                    self._queue.task_done()
+                max_retries = 3
+                for attempt in range(1, max_retries + 1):
+                    try:
+                        res = requests.post(self.webhook_url, json=payload, timeout=6)
+                        if res.status_code in [200, 204]:
+                            break
+                        elif res.status_code == 429:
+                            retry_after = 1.0
+                            try:
+                                data = res.json()
+                                retry_after = float(data.get("retry_after", 1.0))
+                            except Exception:
+                                pass
+                            time.sleep(retry_after)
+                        elif res.status_code >= 500:
+                            time.sleep(0.5 * attempt)
+                        else:
+                            logger.warning(f"Discord returned HTTP status {res.status_code}")
+                            break
+                    except Exception as e:
+                        if attempt == max_retries:
+                            logger.warning(f"Failed to deliver Discord notification after {max_retries} attempts: {e}")
+                        time.sleep(0.5 * attempt)
+                self._queue.task_done()
             except queue.Empty:
                 continue
 

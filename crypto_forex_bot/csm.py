@@ -1,3 +1,4 @@
+import time
 import logging
 import pandas as pd
 import numpy as np
@@ -20,14 +21,20 @@ class CurrencyStrengthMeter:
     def __init__(self, connector):
         self.connector = connector
         self.cached_scores: Dict[str, float] = {}
-        self.last_update = None
+        self.last_update: Optional[float] = None
+        self.cache_ttl_seconds: float = 60.0
 
     def calculate_strengths(self) -> Dict[str, float]:
         """
         Calculates relative strength ratings for USD, EUR, GBP, JPY, and AUD.
         Uses 14-period multi-pair momentum across liquid majors and crosses
         to triangulate true isolated currency strength.
+        Cached with 60-second TTL to eliminate redundant MT5 IPC calls.
         """
+        now = time.time()
+        if self.cached_scores and self.last_update is not None and (now - self.last_update) < self.cache_ttl_seconds:
+            return self.cached_scores
+
         raw_strengths = {"USD": 0.0, "EUR": 0.0, "GBP": 0.0, "JPY": 0.0, "AUD": 0.0}
 
         for pair in self.CORE_PAIRS:
@@ -63,6 +70,7 @@ class CurrencyStrengthMeter:
             scores[ccy] = round(max(-10.0, min(10.0, val)), 1)
 
         self.cached_scores = scores
+        self.last_update = now
         return scores
 
     def get_currency_differential(self, symbol: str) -> Tuple[float, str, str]:

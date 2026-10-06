@@ -5,6 +5,10 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple
 import config
 from quant_engine import QuantitativeEngine
+try:
+    from crypto_forex_bot.regime_detector import MarketRegimeDetector
+except ImportError:
+    from regime_detector import MarketRegimeDetector
 
 TRAINED_MODELS_PATH = os.path.join(os.path.dirname(__file__), "trained_models.json")
 
@@ -33,9 +37,24 @@ class ForexConfluenceStrategy:
         self.rsi_period = rsi_period
         self.atr_period = atr_period
         self.adx_period = adx_period
+        self._indicators_cache: Dict[str, Tuple[Any, pd.DataFrame]] = {}
 
-    def calculate_indicators(self, rates_data) -> pd.DataFrame:
-        """Calculates EMAs, RSI, ATR, ADX, Volume SMA, Z-Score, CHOP, and VWAP."""
+    def calculate_indicators(self, rates_data, symbol: Optional[str] = None) -> pd.DataFrame:
+        """Calculates EMAs, RSI, ATR, ADX, Volume SMA, Z-Score, CHOP, and VWAP with per-symbol caching."""
+        def _extract_time(data):
+            if isinstance(data, pd.DataFrame):
+                return data["time"].iloc[-1] if not data.empty and "time" in data.columns else None
+            elif isinstance(data, (list, np.ndarray)) and len(data) > 0:
+                item = data[-1]
+                return item["time"] if isinstance(item, (dict, np.void)) or hasattr(item, "__getitem__") else getattr(item, "time", None)
+            return None
+
+        if symbol and rates_data is not None and len(rates_data) > 0:
+            last_time = _extract_time(rates_data)
+            cached = self._indicators_cache.get(symbol)
+            if cached and last_time is not None and cached[0] == last_time and len(cached[1]) == len(rates_data):
+                return cached[1].copy()
+
         df = pd.DataFrame(rates_data)
         if df.empty or len(df) < self.ema_slow + 5:
             return df
@@ -45,10 +64,11 @@ class ForexConfluenceStrategy:
         else:
             df["time"] = pd.to_datetime(df["time"], utc=True)
 
-        high = df["high"]
-        low = df["low"]
-        close = df["close"]
-        vol = df["tick_volume"] if "tick_volume" in df.columns else (df["volume"] if "volume" in df.columns else pd.Series(100.0, index=df.index))
+        high: pd.Series = pd.Series(df["high"], dtype=float)
+        low: pd.Series = pd.Series(df["low"], dtype=float)
+        close: pd.Series = pd.Series(df["close"], dtype=float)
+        vol_col = df["tick_volume"] if "tick_volume" in df.columns else (df["volume"] if "volume" in df.columns else pd.Series(100.0, index=df.index))
+        vol: pd.Series = pd.Series(vol_col, dtype=float)
 
         # EMAs
         df["ema_fast"] = close.ewm(span=self.ema_fast, adjust=False).mean()
@@ -95,6 +115,11 @@ class ForexConfluenceStrategy:
         # 3. Daily-Anchored Session VWAP
         df["vwap"] = QuantitativeEngine.calculate_vwap(high, low, close, vol, datetimes=df["time"])
 
+        if symbol and rates_data is not None and len(rates_data) > 0:
+            last_time = _extract_time(rates_data)
+            if last_time is not None:
+                self._indicators_cache[symbol] = (last_time, df)
+
         return df
 
     def analyze_h1_trend(self, h1_rates) -> Tuple[str, float, float]:
@@ -126,7 +151,7 @@ class ForexConfluenceStrategy:
         - Rejection Wicks & Volume Surge
         - SMC Trap Avoidance & FVG Imbalance
         """
-        df_m5 = self.calculate_indicators(m5_rates)
+        df_m5 = self.calculate_indicators(m5_rates, symbol=symbol)
         if df_m5.empty or len(df_m5) < self.ema_slow:
             return {
                 "signal": "HOLD",
@@ -206,6 +231,11 @@ class ForexConfluenceStrategy:
         rsi_ob = 100.0 - rsi_os
         z_limit = trained_p.get("z_score_limit", config.Z_SCORE_PULLBACK_MAX)
 
+        # Market Regime Classification
+        regime_info = MarketRegimeDetector.classify_regime(adx_val, chop_val, atr_percentile, z_score_val)
+        metrics["regime"] = regime_info["regime"]
+        allowed_setups = regime_info["allowed_setups"]
+
         # -------------------------------------------------------------
         # QUANTITATIVE GATEKEEPER 1: CHOPPINESS INDEX (FRACTAL CHOP)
         # -------------------------------------------------------------
@@ -249,16 +279,20 @@ class ForexConfluenceStrategy:
             if fvg_rejection and close >= open_price and close >= (ema_slow_val * 0.999):
                 buy_setup = "SETUP_2_FVG_MITIGATION"
 
-        # Setup 3: Institutional Momentum Expansion / Breakout
+        # Setup 3: Institutional Momentum Expansion / Breakout (with breakout volume confirmation)
         if not buy_setup and len(df_m5) >= 6:
             prior_5_high = max(df_m5["high"].iloc[-6:-1])
             micro_bos = close > prior_5_high
             is_expansion_candle = (candle_range >= 0.95 * atr_val) and ((close - open_price) >= 0.40 * candle_range)
-            momentum_aligned = (adx_val >= 20.0) and (rsi_curr >= 52.0) and (close > ema_fast_val > ema_slow_val)
+            momentum_aligned = (adx_val >= 20.0) and (rsi_curr >= 52.0) and (close > ema_fast_val > ema_slow_val) and (vol_ratio >= 1.0)
             if micro_bos and is_expansion_candle and momentum_aligned:
                 buy_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
         if buy_setup:
+            # 0. Market Regime Guard
+            if buy_setup not in allowed_setups:
+                return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed by Market Regime ({regime_info['regime']}): {regime_info['description']}.", "metrics": metrics, "score": 0}
+
             # 1. Higher Timeframe Guard
             if h1_trend == "BEARISH":
                 return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: H1 macro trend is BEARISH.", "metrics": metrics, "score": 0}
@@ -334,16 +368,20 @@ class ForexConfluenceStrategy:
             if fvg_rejection_sell and close <= open_price and close <= (ema_slow_val * 1.001):
                 sell_setup = "SETUP_2_FVG_MITIGATION"
 
-        # Setup 3: Institutional Momentum Expansion / Breakdown
+        # Setup 3: Institutional Momentum Expansion / Breakdown (with breakout volume confirmation)
         if not sell_setup and len(df_m5) >= 6:
             prior_5_low = min(df_m5["low"].iloc[-6:-1])
             micro_bos_sell = close < prior_5_low
             is_expansion_candle_sell = (candle_range >= 0.95 * atr_val) and ((open_price - close) >= 0.40 * candle_range)
-            momentum_aligned_sell = (adx_val >= 20.0) and (rsi_curr <= 48.0) and (close < ema_fast_val < ema_slow_val)
+            momentum_aligned_sell = (adx_val >= 20.0) and (rsi_curr <= 48.0) and (close < ema_fast_val < ema_slow_val) and (vol_ratio >= 1.0)
             if micro_bos_sell and is_expansion_candle_sell and momentum_aligned_sell:
                 sell_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
         if sell_setup:
+            # 0. Market Regime Guard
+            if sell_setup not in allowed_setups:
+                return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed by Market Regime ({regime_info['regime']}): {regime_info['description']}.", "metrics": metrics, "score": 0}
+
             # 1. Higher Timeframe Guard
             if h1_trend == "BULLISH":
                 return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: H1 macro trend is BULLISH.", "metrics": metrics, "score": 0}

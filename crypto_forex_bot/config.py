@@ -24,10 +24,12 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 # ==========================================
 # TRADING INSTRUMENT & BASKET SCANNER
 # ==========================================
-SYMBOL = os.getenv("TRADING_SYMBOL", "EURUSDm")
+SYMBOL = os.getenv("TRADING_SYMBOL", "BTCUSDm")
 USE_MULTI_PAIR_BASKET = True  # Scans major pairs and picks the best setup
-# Curated Liquid Pairs with Active Broker Execution (BTCUSDm, ETHUSDm, EURUSDm, GBPUSDm, USDJPYm)
-SYMBOLS_BASKET = ["BTCUSDm", "ETHUSDm", "EURUSDm", "GBPUSDm", "USDJPYm"]
+# Curated High-Expectancy Liquid Pairs with Proven Positive Edge (BTC, ETH, SOL, XRP, USDJPY, GBPUSD)
+# Negative-edge symbols (EURUSDm PF:0.84, AUDUSDm PF:0.52) are strictly excluded.
+SYMBOLS_BASKET = ["BTCUSDm", "ETHUSDm", "SOLUSDm", "XRPUSDm", "USDJPYm", "GBPUSDm"]
+NEGATIVE_EDGE_SYMBOLS = ["EURUSDm", "AUDUSDm"]
 
 TIMEFRAME = "M5"              # Primary execution timeframe
 HIGHER_TIMEFRAME = "H1"       # Macro trend alignment timeframe
@@ -133,6 +135,8 @@ MAX_LOT_SIZE = 0.10
 MAX_CONSECUTIVE_LOSSES = 2
 COOLDOWN_HOURS = 3
 MAX_DAILY_LOSS_USD = 5.0
+INTRADAY_PROFIT_LOCK_PCT = 0.10        # Trailing profit lock triggers at +10% of starting balance
+INTRADAY_PROFIT_GIVEBACK_RATIO = 0.50  # Halt if 50% of peak profit is given back
 
 # ==========================================
 # DYNAMIC ATR-BASED STOP LOSS & TAKE PROFIT
@@ -187,3 +191,15 @@ DAILY_REPORT_HOUR_UTC = 20
 MAGIC_NUMBER = 112233
 DEVIATION_POINTS = 20
 SLEEP_INTERVAL_SECONDS = 5
+
+def validate_config():
+    """Validates runtime configuration constraints on startup."""
+    assert 0 < KELLY_FRACTION <= 1.0, f"KELLY_FRACTION must be in (0, 1.0], got {KELLY_FRACTION}"
+    assert MAX_OPEN_POSITIONS >= 1, f"MAX_OPEN_POSITIONS must be >= 1, got {MAX_OPEN_POSITIONS}"
+    assert MAX_DAILY_LOSS_USD > 0, f"MAX_DAILY_LOSS_USD must be > 0, got {MAX_DAILY_LOSS_USD}"
+    assert BASE_LOT_SIZE > 0, f"BASE_LOT_SIZE must be > 0, got {BASE_LOT_SIZE}"
+    assert len(SYMBOLS_BASKET) > 0, "SYMBOLS_BASKET cannot be empty"
+    overlap = set(SYMBOLS_BASKET).intersection(set(NEGATIVE_EDGE_SYMBOLS))
+    assert not overlap, f"SYMBOLS_BASKET contains blacklisted negative-edge symbols: {overlap}"
+
+validate_config()

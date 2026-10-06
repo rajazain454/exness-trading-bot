@@ -73,10 +73,13 @@ class QuantBacktester:
         be_trigger_pips: float = 10.0,
         be_offset_pips: float = 1.0,
         base_sl_mult: float = 1.5,
-        base_tp_mult: float = 2.5
+        base_tp_mult: float = 2.5,
+        spread_pips: float = 1.2,
+        slippage_pips: float = 0.2
     ) -> Dict[str, Any]:
         """
-        Executes a bar-by-bar backtest simulation with given quantitative parameters.
+        Executes a bar-by-bar backtest simulation with given quantitative parameters,
+        incorporating realistic broker spread and slippage friction.
         """
         balance = self.initial_balance
         peak_balance = self.initial_balance
@@ -87,6 +90,8 @@ class QuantBacktester:
 
         be_trigger_dist = be_trigger_pips * pip_size
         be_offset_dist = be_offset_pips * pip_size
+        spread_dist = spread_pips * pip_size
+        slippage_dist = slippage_pips * pip_size
 
         # Precompute H1 trend index mapping for fast lookups
         h1_times = df_h1["time"].values
@@ -256,12 +261,13 @@ class QuantBacktester:
                         continue
                     # RSI Pullback trigger
                     if min(rsi_p1, rsi_p2) <= rsi_oversold and rsi > rsi_oversold and rsi > rsi_p1 and close >= open_p:
+                        real_entry = close + (spread_dist / 2.0) + slippage_dist
                         active_trade = {
                             "type": "BUY",
                             "lot": sim_lot,
-                            "entry_price": close,
-                            "sl": round(close - sl_dist, 5),
-                            "tp": round(close + tp_dist, 5),
+                            "entry_price": real_entry,
+                            "sl": round(real_entry - sl_dist, 5),
+                            "tp": round(real_entry + tp_dist, 5),
                             "entry_time": bar_time,
                             "be_locked": False
                         }
@@ -275,12 +281,13 @@ class QuantBacktester:
                         continue
                     # RSI Pullback trigger
                     if max(rsi_p1, rsi_p2) >= rsi_overbought and rsi < rsi_overbought and rsi < rsi_p1 and close <= open_p:
+                        real_entry = close - (spread_dist / 2.0) - slippage_dist
                         active_trade = {
                             "type": "SELL",
                             "lot": sim_lot,
-                            "entry_price": close,
-                            "sl": round(close + sl_dist, 5),
-                            "tp": round(close - tp_dist, 5),
+                            "entry_price": real_entry,
+                            "sl": round(real_entry + sl_dist, 5),
+                            "tp": round(real_entry - tp_dist, 5),
                             "entry_time": bar_time,
                             "be_locked": False
                         }

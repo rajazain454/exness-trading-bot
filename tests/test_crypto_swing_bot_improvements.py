@@ -164,6 +164,8 @@ class TestCryptoSwingBotImprovements(unittest.TestCase):
 
             print("  [PASS] Test 4: Partitioned Kelly stats & sizing for FOREX and CRYPTO verified")
         finally:
+            if 'journal' in locals() and hasattr(journal, 'close'):
+                journal.close()
             if os.path.exists(temp_db):
                 os.remove(temp_db)
 

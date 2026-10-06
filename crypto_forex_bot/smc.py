@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 import pandas as pd
 from typing import Dict, Any, Tuple, Optional
 import MetaTrader5 as mt5
@@ -17,10 +18,15 @@ class SmartMoneyConcepts:
 
     def __init__(self, connector):
         self.connector = connector
-        self.daily_levels_cache: Dict[str, Dict[str, float]] = {}
+        self.daily_levels_cache: Dict[str, Dict[str, Any]] = {}
 
-    def get_daily_levels(self, symbol: str) -> Dict[str, float]:
-        """Calculates Previous Day High, Low, Pivot, R1, and S1."""
+    def get_daily_levels(self, symbol: str) -> Dict[str, Any]:
+        """Calculates Previous Day High, Low, Pivot, R1, and S1 with date-based caching."""
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        cached = self.daily_levels_cache.get(symbol)
+        if cached and cached.get("_date") == today_str:
+            return cached
+
         d1_rates = self.connector.get_rates(symbol, "D1", count=4)
         if d1_rates is None or len(d1_rates) < 2:
             return {}
@@ -28,20 +34,24 @@ class SmartMoneyConcepts:
         df_d1 = pd.DataFrame(d1_rates)
         # Completed previous day is index -2
         prev_day = df_d1.iloc[-2]
-        high_d = prev_day["high"]
-        low_d = prev_day["low"]
-        close_d = prev_day["close"]
+        high_d = float(prev_day["high"])
+        low_d = float(prev_day["low"])
+        close_d = float(prev_day["close"])
 
         pivot = (high_d + low_d + close_d) / 3.0
         r1 = (2 * pivot) - low_d
         s1 = (2 * pivot) - high_d
 
+        info = mt5.symbol_info(symbol)
+        digits = info.digits if info else 5
+
         levels = {
-            "pdh": round(high_d, 5),
-            "pdl": round(low_d, 5),
-            "pivot": round(pivot, 5),
-            "r1": round(r1, 5),
-            "s1": round(s1, 5)
+            "pdh": round(high_d, digits),
+            "pdl": round(low_d, digits),
+            "pivot": round(pivot, digits),
+            "r1": round(r1, digits),
+            "s1": round(s1, digits),
+            "_date": today_str
         }
         self.daily_levels_cache[symbol] = levels
         return levels

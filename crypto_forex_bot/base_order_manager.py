@@ -21,6 +21,10 @@ class BaseOrderManager:
     - Real-time Discord trade notifications
     """
 
+    notifier: Any = None
+    journal: Any = None
+    risk_manager: Any = None
+
     def __init__(
         self,
         connector: Any,
@@ -271,7 +275,30 @@ class BaseOrderManager:
             "type_filling": filling,
         }
 
-        result = mt5.order_send(request)
+        RETRIABLE_RETCODES = {
+            getattr(mt5, "TRADE_RETCODE_REQUOTE", 10004),
+            getattr(mt5, "TRADE_RETCODE_PRICE_OFF", 10018),
+            getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020),
+            getattr(mt5, "TRADE_RETCODE_TIMEOUT", 10022),
+            getattr(mt5, "TRADE_RETCODE_CONNECTION", 10031),
+            10021,
+        }
+
+        result = None
+        for attempt in range(1, 4):
+            result = mt5.order_send(request)
+            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                break
+            retcode = result.retcode if result else -1
+            if retcode in RETRIABLE_RETCODES and attempt < 3:
+                time.sleep(0.2 * attempt)
+                fresh_tick = self.connector.get_symbol_tick(position.symbol)
+                if fresh_tick:
+                    price = fresh_tick.bid if position.type == mt5.ORDER_TYPE_BUY else fresh_tick.ask
+                    request["price"] = price
+            else:
+                break
+
         success = bool(result and result.retcode == mt5.TRADE_RETCODE_DONE)
         if success and position.ticket in self.tracked_positions:
             self.tracked_positions[position.ticket]["partial_closed"] = True
@@ -279,7 +306,7 @@ class BaseOrderManager:
         return success
 
     def close_position(self, position: Any, reason: str = "Manual / System Close") -> bool:
-        """Closes an active position immediately at market price."""
+        """Closes an active position immediately at market price with retries."""
         tick = self.connector.get_symbol_tick(position.symbol)
         if not tick:
             return False
@@ -302,7 +329,30 @@ class BaseOrderManager:
             "type_filling": filling,
         }
 
-        result = mt5.order_send(request)
+        RETRIABLE_RETCODES = {
+            getattr(mt5, "TRADE_RETCODE_REQUOTE", 10004),
+            getattr(mt5, "TRADE_RETCODE_PRICE_OFF", 10018),
+            getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020),
+            getattr(mt5, "TRADE_RETCODE_TIMEOUT", 10022),
+            getattr(mt5, "TRADE_RETCODE_CONNECTION", 10031),
+            10021,
+        }
+
+        result = None
+        for attempt in range(1, 4):
+            result = mt5.order_send(request)
+            if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+                break
+            retcode = result.retcode if result else -1
+            if retcode in RETRIABLE_RETCODES and attempt < 3:
+                time.sleep(0.2 * attempt)
+                fresh_tick = self.connector.get_symbol_tick(position.symbol)
+                if fresh_tick:
+                    price = fresh_tick.bid if position.type == mt5.ORDER_TYPE_BUY else fresh_tick.ask
+                    request["price"] = price
+            else:
+                break
+
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
             logger.info(f"Closed position #{position.ticket} ({reason})")
             self.detect_and_handle_closed_positions()

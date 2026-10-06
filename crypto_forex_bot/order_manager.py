@@ -1,5 +1,6 @@
 import logging
 import time
+import math
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import MetaTrader5 as mt5
@@ -18,12 +19,16 @@ class OrderManager(BaseOrderManager):
     Inherits core broker primitives and state tracking from BaseOrderManager.
     """
 
-    def __init__(self, connector, risk_manager=None):
+    notifier: Any = None
+    journal: Any = None
+    risk_manager: Any = None
+
+    def __init__(self, connector, risk_manager=None, notifier=None, journal=None):
         super().__init__(
             connector=connector,
             magic_number=config.MAGIC_NUMBER,
-            notifier=DiscordNotifier(),
-            journal=TradeJournal(),
+            notifier=notifier if notifier is not None else DiscordNotifier(),
+            journal=journal if journal is not None else TradeJournal(),
             risk_manager=risk_manager,
             deviation_points=config.DEVIATION_POINTS,
         )
@@ -78,6 +83,9 @@ class OrderManager(BaseOrderManager):
         pip_size = self.connector.get_pip_size(symbol)
         filling = self.get_filling_mode(symbol)
 
+        s_info = mt5.symbol_info(symbol)
+        digits = s_info.digits if s_info else 5
+
         # Check entry mode: Market vs Limit Pullback
         if config.ENTRY_ORDER_TYPE == "LIMIT_PULLBACK":
             atr_val = trade_params.get("atr", 0.0)
@@ -91,21 +99,25 @@ class OrderManager(BaseOrderManager):
                 limit_offset = config.LIMIT_PULLBACK_OFFSET_PIPS * pip_size
 
             order_type = mt5.ORDER_TYPE_BUY_LIMIT if signal == "BUY" else mt5.ORDER_TYPE_SELL_LIMIT
-            req_price = round((tick.ask - limit_offset) if signal == "BUY" else (tick.bid + limit_offset), 5)
+            req_price = round((tick.ask - limit_offset) if signal == "BUY" else (tick.bid + limit_offset), digits)
             action = mt5.TRADE_ACTION_PENDING
         else:
             order_type = mt5.ORDER_TYPE_BUY if signal == "BUY" else mt5.ORDER_TYPE_SELL
-            req_price = tick.ask if signal == "BUY" else tick.bid
+            req_price = round(tick.ask if signal == "BUY" else tick.bid, digits)
             action = mt5.TRADE_ACTION_DEAL
+
+        req_sl = round(float(trade_params["sl"]), digits)
+        req_tp = round(float(trade_params["tp"]), digits)
+        req_lot = float(trade_params["lot"])
 
         request = {
             "action": action,
             "symbol": symbol,
-            "volume": float(trade_params["lot"]),
+            "volume": req_lot,
             "type": order_type,
             "price": float(req_price),
-            "sl": float(trade_params["sl"]),
-            "tp": float(trade_params["tp"]),
+            "sl": req_sl,
+            "tp": req_tp,
             "deviation": int(config.DEVIATION_POINTS),
             "magic": self.magic_number,
             "comment": f"Exness_{config.ENTRY_ORDER_TYPE}",
@@ -113,14 +125,52 @@ class OrderManager(BaseOrderManager):
             "type_filling": filling,
         }
 
-        # Measure roundtrip latency
-        t_start = time.perf_counter()
-        result = mt5.order_send(request)
-        latency_ms = (time.perf_counter() - t_start) * 1000.0
+        # Order Execution with Retry Loop for transient broker conditions
+        retriable_codes = {
+            getattr(mt5, "TRADE_RETCODE_REQUOTE", 10004),
+            getattr(mt5, "TRADE_RETCODE_PRICE_OFF", 10018),
+            getattr(mt5, "TRADE_RETCODE_PRICE_CHANGED", 10020),
+            getattr(mt5, "TRADE_RETCODE_TIMEOUT", 10022),
+            getattr(mt5, "TRADE_RETCODE_CONNECTION", 10031),
+            10021,  # TRADE_RETCODE_NO_QUOTES
+        }
+
+        max_retries = 3
+        result = None
+        latency_ms = 0.0
+
+        for attempt in range(1, max_retries + 1):
+            t_start = time.perf_counter()
+            result = mt5.order_send(request)
+            latency_ms = (time.perf_counter() - t_start) * 1000.0
+
+            if result is not None and result.retcode == mt5.TRADE_RETCODE_DONE:
+                break
+
+            retcode = result.retcode if result else -1
+            err_msg = result.comment if result else str(mt5.last_error())
+
+            if retcode in retriable_codes and attempt < max_retries:
+                logger.warning(
+                    f"Order send attempt {attempt}/{max_retries} for {symbol} returned {retcode} ({err_msg}). "
+                    f"Refreshing tick and retrying..."
+                )
+                time.sleep(0.25 * attempt)
+                fresh_tick = self.connector.get_symbol_tick(symbol)
+                if fresh_tick:
+                    tick = fresh_tick
+                    if action == mt5.TRADE_ACTION_DEAL:
+                        req_price = round(tick.ask if signal == "BUY" else tick.bid, digits)
+                        request["price"] = float(req_price)
+                    elif action == mt5.TRADE_ACTION_PENDING:
+                        req_price = round((tick.ask - limit_offset) if signal == "BUY" else (tick.bid + limit_offset), digits)
+                        request["price"] = float(req_price)
+                continue
+            else:
+                logger.error(f"Order rejected on Exness (Code {retcode}): {err_msg}")
+                return None
 
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-            err = result.comment if result else mt5.last_error()
-            logger.error(f"Order rejected on Exness: {err}")
             return None
 
         ticket = result.order
@@ -137,10 +187,10 @@ class OrderManager(BaseOrderManager):
             ticket=ticket,
             symbol=symbol,
             signal=signal,
-            lot=float(trade_params["lot"]),
+            lot=req_lot,
             entry_price=float(executed_price),
-            sl=float(trade_params["sl"]),
-            tp=float(trade_params["tp"]),
+            sl=req_sl,
+            tp=req_tp,
             latency_ms=latency_ms,
             slippage_pips=slippage_pips
         )
@@ -164,11 +214,22 @@ class OrderManager(BaseOrderManager):
             return
 
         pip_size = self.connector.get_pip_size(symbol)
-        is_crypto = any(c in symbol for c in ["BTC", "ETH", "SOL", "XRP"])
+        s_info = mt5.symbol_info(symbol)
+        digits = s_info.digits if s_info else 5
+        vol_min = s_info.volume_min if (s_info and s_info.volume_min > 0) else 0.01
+        vol_step = s_info.volume_step if (s_info and s_info.volume_step > 0) else 0.01
+        is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
 
         for pos in positions:
             ticket = pos.ticket
-            pos_meta = self.tracked_positions.get(ticket, {})
+            pos_meta = self.tracked_positions.setdefault(ticket, {
+                "ticket": ticket,
+                "symbol": symbol,
+                "be_locked": False,
+                "partial_closed": False,
+                "sl": pos.sl,
+                "tp": pos.tp
+            })
 
             # Derive dynamic targets from actual initial stop distance if available
             risk_dist = abs(pos.price_open - pos.sl) if pos.sl > 0 else 0.0
@@ -188,22 +249,28 @@ class OrderManager(BaseOrderManager):
             # BUY Position Management
             if pos.type == mt5.ORDER_TYPE_BUY:
                 current_profit_distance = tick.bid - pos.price_open
-                be_price = round(pos.price_open + be_offset, 5)
+                be_price = round(pos.price_open + be_offset, digits)
 
-                if config.ENABLE_PARTIAL_TP and pos.volume >= 0.02 and not pos_meta.get("partial_closed"):
-                    if current_profit_distance >= partial_tp_dist:
-                        close_vol = round(pos.volume * config.PARTIAL_CLOSE_RATIO, 2)
-                        if self.close_partial_position(pos, close_vol):
-                            pos_meta["partial_closed"] = True
-                            remaining_vol = round(pos.volume - close_vol, 2)
-                            pips_banked = current_profit_distance / pip_size
-                            pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
-                            pnl_banked = round(pips_banked * pip_dollar_val, 2)
+                can_partial_close = (
+                    config.ENABLE_PARTIAL_TP
+                    and pos.volume >= (vol_min * 2)
+                    and not pos_meta.get("partial_closed")
+                )
+                if can_partial_close and current_profit_distance >= partial_tp_dist:
+                    step_decimals = max(0, -int(math.log10(vol_step))) if vol_step < 1 else 2
+                    close_vol = round(pos.volume * config.PARTIAL_CLOSE_RATIO, step_decimals)
+                    close_vol = max(vol_min, close_vol)
+                    if (pos.volume - close_vol) >= vol_min and self.close_partial_position(pos, close_vol):
+                        pos_meta["partial_closed"] = True
+                        remaining_vol = round(pos.volume - close_vol, step_decimals)
+                        pips_banked = current_profit_distance / pip_size
+                        pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
+                        pnl_banked = round(pips_banked * pip_dollar_val, 2)
 
-                            logger.info(f"[Partial-TP] Banked +${pnl_banked:.2f} on BUY #{ticket}. Remaining: {remaining_vol} lot.")
-                            self.update_sl(pos, be_price)
-                            self.notifier.notify_partial_tp_locked(symbol, ticket, close_vol, remaining_vol, pnl_banked, be_price)
-                            continue
+                        logger.info(f"[Partial-TP] Banked +${pnl_banked:.2f} on BUY #{ticket}. Remaining: {remaining_vol} lot.")
+                        self.update_sl(pos, be_price)
+                        self.notifier.notify_partial_tp_locked(symbol, ticket, close_vol, remaining_vol, pnl_banked, be_price)
+                        continue
 
                 if current_profit_distance >= be_trigger and not pos_meta.get("be_locked"):
                     if pos.sl < be_price:
@@ -214,7 +281,7 @@ class OrderManager(BaseOrderManager):
                             continue
 
                 if config.TRAILING_STOP_ENABLED and current_profit_distance >= trail_dist:
-                    target_sl = round(tick.bid - trail_dist, 5)
+                    target_sl = round(tick.bid - trail_dist, digits)
                     if target_sl > (pos.sl + trail_step):
                         if self.update_sl(pos, target_sl):
                             logger.info(f"[Trailing-Stop] Advanced on BUY #{ticket}. SL -> {target_sl}")
@@ -223,22 +290,28 @@ class OrderManager(BaseOrderManager):
             # SELL Position Management
             elif pos.type == mt5.ORDER_TYPE_SELL:
                 current_profit_distance = pos.price_open - tick.ask
-                be_price = round(pos.price_open - be_offset, 5)
+                be_price = round(pos.price_open - be_offset, digits)
 
-                if config.ENABLE_PARTIAL_TP and pos.volume >= 0.02 and not pos_meta.get("partial_closed"):
-                    if current_profit_distance >= partial_tp_dist:
-                        close_vol = round(pos.volume * config.PARTIAL_CLOSE_RATIO, 2)
-                        if self.close_partial_position(pos, close_vol):
-                            pos_meta["partial_closed"] = True
-                            remaining_vol = round(pos.volume - close_vol, 2)
-                            pips_banked = current_profit_distance / pip_size
-                            pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
-                            pnl_banked = round(pips_banked * pip_dollar_val, 2)
+                can_partial_close = (
+                    config.ENABLE_PARTIAL_TP
+                    and pos.volume >= (vol_min * 2)
+                    and not pos_meta.get("partial_closed")
+                )
+                if can_partial_close and current_profit_distance >= partial_tp_dist:
+                    step_decimals = max(0, -int(math.log10(vol_step))) if vol_step < 1 else 2
+                    close_vol = round(pos.volume * config.PARTIAL_CLOSE_RATIO, step_decimals)
+                    close_vol = max(vol_min, close_vol)
+                    if (pos.volume - close_vol) >= vol_min and self.close_partial_position(pos, close_vol):
+                        pos_meta["partial_closed"] = True
+                        remaining_vol = round(pos.volume - close_vol, step_decimals)
+                        pips_banked = current_profit_distance / pip_size
+                        pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
+                        pnl_banked = round(pips_banked * pip_dollar_val, 2)
 
-                            logger.info(f"[Partial-TP] Banked +${pnl_banked:.2f} on SELL #{ticket}. Remaining: {remaining_vol} lot.")
-                            self.update_sl(pos, be_price)
-                            self.notifier.notify_partial_tp_locked(symbol, ticket, close_vol, remaining_vol, pnl_banked, be_price)
-                            continue
+                        logger.info(f"[Partial-TP] Banked +${pnl_banked:.2f} on SELL #{ticket}. Remaining: {remaining_vol} lot.")
+                        self.update_sl(pos, be_price)
+                        self.notifier.notify_partial_tp_locked(symbol, ticket, close_vol, remaining_vol, pnl_banked, be_price)
+                        continue
 
                 if current_profit_distance >= be_trigger and not pos_meta.get("be_locked"):
                     if pos.sl == 0.0 or pos.sl > be_price:
@@ -249,7 +322,7 @@ class OrderManager(BaseOrderManager):
                             continue
 
                 if config.TRAILING_STOP_ENABLED and current_profit_distance >= trail_dist:
-                    target_sl = round(tick.ask + trail_dist, 5)
+                    target_sl = round(tick.ask + trail_dist, digits)
                     if pos.sl == 0.0 or target_sl < (pos.sl - trail_step):
                         if self.update_sl(pos, target_sl):
                             logger.info(f"[Trailing-Stop] Advanced on SELL #{ticket}. SL -> {target_sl}")

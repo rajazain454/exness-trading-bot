@@ -1,6 +1,10 @@
-import time
+import os
 import sys
+import time
+import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime, timezone, timedelta
+from typing import Any, Optional, Dict, List
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
@@ -9,7 +13,23 @@ from rich.live import Live
 from rich.text import Text
 import MetaTrader5 as mt5
 
+# Setup persistent rotating file logger for full auditability
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, "bot.log")
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+if not any(isinstance(h, RotatingFileHandler) for h in _root_logger.handlers):
+    _file_handler = RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
+    _file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] [%(name)s] %(message)s"))
+    _root_logger.addHandler(_file_handler)
+
+bot_logger = logging.getLogger("Bot")
+
 import config
+from notifier import DiscordNotifier
+from journal import TradeJournal
 from mt5_connector import MT5Connector
 from strategy import ForexConfluenceStrategy
 from risk_manager import RiskManager
@@ -30,6 +50,13 @@ class ExnessTradingBot:
     SQLite journaling, and Discord push digests.
     """
 
+    csm: Any = None
+    smc: Any = None
+    risk_manager: Any = None
+    order_manager: Any = None
+    notifier: Any = None
+    journal: Any = None
+
     def __init__(self):
         self.connector = MT5Connector()
         self.strategy = ForexConfluenceStrategy()
@@ -37,6 +64,8 @@ class ExnessTradingBot:
         self.smc = None
         self.risk_manager = None
         self.order_manager = None
+        self.notifier = None
+        self.journal = None
         self.basket_symbols = []
         self.running = False
         self.logs = []
@@ -45,11 +74,20 @@ class ExnessTradingBot:
         self.daily_report_date = None
 
     def log(self, message: str, level: str = "INFO"):
-        """Appends a timestamped log to the event log."""
+        """Appends a timestamped log to the event log and persists to bot.log."""
         timestamp = datetime.now().strftime("%H:%M:%S")
         self.logs.append(f"[{timestamp}] [{level}] {message}")
         if len(self.logs) > 7:
             self.logs.pop(0)
+
+        # Mirror to rotating file log
+        lvl = level.upper()
+        if lvl in ["ERROR", "CRITICAL"]:
+            bot_logger.error(message)
+        elif lvl in ["WARNING", "WARN", "FILTER"]:
+            bot_logger.warning(message)
+        else:
+            bot_logger.info(f"[{level}] {message}")
 
     def setup(self) -> bool:
         """Initializes connection to Exness MT5, CSM, SMC, and resolves basket symbols."""
@@ -74,10 +112,17 @@ class ExnessTradingBot:
             self.log("No valid symbols could be verified on Exness.", "ERROR")
             return False
 
+        self.notifier = DiscordNotifier()
+        self.journal = TradeJournal()
         self.csm = CurrencyStrengthMeter(self.connector)
         self.smc = SmartMoneyConcepts(self.connector)
-        self.risk_manager = RiskManager(self.connector)
-        self.order_manager = OrderManager(self.connector, risk_manager=self.risk_manager)
+        self.risk_manager = RiskManager(self.connector, notifier=self.notifier, journal=self.journal)
+        self.order_manager = OrderManager(
+            self.connector,
+            risk_manager=self.risk_manager,
+            notifier=self.notifier,
+            journal=self.journal
+        )
 
         if config.NEWS_FILTER_ENABLED:
             self.risk_manager.news_filter.fetch_calendar()
@@ -115,6 +160,10 @@ class ExnessTradingBot:
                     balance=acc.get("balance", 0.0),
                     equity=acc.get("equity", 0.0)
                 )
+            if hasattr(self, "journal") and self.journal:
+                self.journal.backup_database()
+            elif self.order_manager and self.order_manager.journal:
+                self.order_manager.journal.backup_database()
             self.daily_report_date = today
 
     def build_dashboard(self, top_candidate: dict, active_positions: list) -> Layout:
@@ -172,7 +221,7 @@ class ExnessTradingBot:
         layout["account_box"].update(Panel(acc_table, title="[bold]Financials & Currency Strength (CSM)[/bold]", border_style="blue"))
 
         # Scanner & SMC Box
-        sym = top_candidate.get("symbol", self.basket_symbols[0] if self.basket_symbols else "EURUSDm")
+        sym = top_candidate.get("symbol", self.basket_symbols[0] if self.basket_symbols else "BTCUSDm")
         sig = top_candidate.get("signal", "HOLD")
         score = top_candidate.get("score", 0)
         metrics = top_candidate.get("metrics", {})
@@ -191,6 +240,10 @@ class ExnessTradingBot:
         scan_table.add_row("ADX / Volume", f"ADX: {metrics.get('adx', 0.0):.1f} | Vol: {metrics.get('vol_ratio', 0.0):.2f}x")
         scan_table.add_row("SMC Daily Range", f"PDH: {levels.get('pdh', 0.0):.5f} | PDL: {levels.get('pdl', 0.0):.5f}")
         scan_table.add_row("Imbalance (FVG)", f"{metrics.get('fvg', 'NONE')}")
+        filter_reason = top_candidate.get("reason", "None")
+        if len(filter_reason) > 42:
+            filter_reason = filter_reason[:39] + "..."
+        scan_table.add_row("Filter / Reason", f"[dim]{filter_reason}[/dim]")
         scan_table.add_row("Confluence Score", f"[{sig_style}]{sig}[/{sig_style}] (Score: {score}/100)")
         layout["scanner_box"].update(Panel(scan_table, title="[bold]SMC Market Structure & Confluence[/bold]", border_style="magenta"))
 
@@ -277,7 +330,7 @@ class ExnessTradingBot:
                         best_candidate = candidate
 
         if best_candidate is None:
-            fallback_sym = self.basket_symbols[0] if self.basket_symbols else "EURUSDm"
+            fallback_sym = self.basket_symbols[0] if self.basket_symbols else "BTCUSDm"
             best_candidate = {
                 "symbol": fallback_sym,
                 "signal": "HOLD",
@@ -362,10 +415,14 @@ class ExnessTradingBot:
             self.stop()
 
     def stop(self):
-        """Safely shuts down bot, flushes notifier, and closes connector."""
+        """Safely shuts down bot, flushes notifier, closes journal, and closes connector."""
         self.running = False
-        if self.order_manager and self.order_manager.notifier:
+        if hasattr(self, "notifier") and self.notifier:
+            self.notifier.shutdown()
+        elif self.order_manager and self.order_manager.notifier:
             self.order_manager.notifier.shutdown()
+        if hasattr(self, "journal") and self.journal:
+            self.journal.close()
         self.connector.shutdown()
         console.print("[bold green]Exness Trading Bot stopped safely.[/bold green]")
 

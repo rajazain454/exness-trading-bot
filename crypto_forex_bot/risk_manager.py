@@ -190,6 +190,31 @@ class RiskManager:
 
         return True, "Weekend protection check passed"
 
+    def check_correlation_exposure(self, symbol: str) -> Tuple[bool, str]:
+        """Prevents correlated double exposure when multiple positions are open."""
+        correlations: Dict[Tuple[str, str], float] = {
+            ("EURUSDm", "GBPUSDm"): 0.85,
+            ("GBPUSDm", "EURUSDm"): 0.85,
+            ("BTCUSDm", "ETHUSDm"): 0.88,
+            ("ETHUSDm", "BTCUSDm"): 0.88,
+        }
+        positions = self.connector.get_open_positions() if hasattr(self.connector, "get_open_positions") else None
+        if not positions and hasattr(mt5, "positions_get"):
+            try:
+                positions = mt5.positions_get()
+            except Exception:
+                positions = None
+        if not positions:
+            return True, "No correlated positions open"
+
+        for p in positions:
+            open_sym = getattr(p, "symbol", "")
+            if open_sym and open_sym != symbol:
+                corr = correlations.get((symbol, open_sym), 0.0)
+                if corr >= 0.80:
+                    return False, f"Correlation Guard: High correlation ({corr:.2f}) with open position on {open_sym}. Preventing doubled risk."
+        return True, "Correlation clear"
+
     def calculate_lot_size(self, equity: float, symbol: str = "", sl_pips: float = 0.0) -> float:
         """
         Calculates position size using Fractional Kelly Criterion (or smart compounding).
@@ -202,10 +227,30 @@ class RiskManager:
             stats = self.journal.get_all_time_stats(asset_type=asset_type)
 
             if stats.get("total", 0) < 5:
-                # Conservative defaults based on 1-year quant testing
-                win_rate = 45.0 if is_crypto else 60.0
-                avg_win = 4.50 if is_crypto else 2.50
-                avg_loss = 1.50
+                # Load coin-specific 1-year backtested performance if available
+                trained_model_file = os.path.join(os.path.dirname(__file__), "trained_models.json")
+                trained_wr = None
+                trained_pf = None
+                if symbol and os.path.exists(trained_model_file):
+                    try:
+                        with open(trained_model_file, "r") as f:
+                            trained_data = json.load(f)
+                            perf = trained_data.get(symbol, {}).get("one_year_performance", {})
+                            if perf.get("win_rate", 0) > 0:
+                                trained_wr = perf["win_rate"]
+                                trained_pf = perf.get("profit_factor", 1.5)
+                    except Exception:
+                        pass
+
+                if trained_wr is not None:
+                    win_rate = trained_wr
+                    # Derive avg_win / avg_loss from profit factor if available
+                    avg_loss = 1.50
+                    avg_win = avg_loss * (trained_pf if trained_pf and trained_pf > 0 else 1.5)
+                else:
+                    win_rate = 45.0 if is_crypto else 60.0
+                    avg_win = 4.50 if is_crypto else 2.50
+                    avg_loss = 1.50
             else:
                 win_rate = stats.get("win_rate", 60.0)
                 avg_win = stats.get("avg_win_usd", 2.50)
@@ -235,6 +280,15 @@ class RiskManager:
             multiplier = int(equity // config.CAPITAL_PER_001_LOT)
             lot = round(max(config.BASE_LOT_SIZE, multiplier * config.BASE_LOT_SIZE), 2)
 
+        # Equity Curve Throttle: reduce risk by 50% during consecutive losses or negative daily drift
+        if hasattr(self, "journal") and self.journal:
+            try:
+                stats = self.journal.get_today_summary()
+                if stats.get("net_pnl", 0.0) < -2.0 or stats.get("losses", 0) >= 2:
+                    lot = max(config.BASE_LOT_SIZE, lot * 0.5)
+            except Exception:
+                pass
+
         # Broker symbol compliance: volume_min, volume_max, volume_step
         s_info = mt5.symbol_info(symbol) if symbol else None
         if s_info:
@@ -260,6 +314,11 @@ class RiskManager:
         Enforces position limits, spread anomalies, cooldowns, sessions, news, Friday cutoff, and margin.
         """
         self.check_new_day()
+
+        # Block negative-edge symbols with proven negative EV
+        negative_edge = getattr(config, "NEGATIVE_EDGE_SYMBOLS", ["EURUSDm", "AUDUSDm"])
+        if symbol in negative_edge:
+            return False, f"{symbol} is blacklisted due to negative mathematical edge in quant analysis."
 
         if active_positions_count >= config.MAX_OPEN_POSITIONS:
             return False, f"Maximum open position limit ({config.MAX_OPEN_POSITIONS}) reached."
@@ -289,6 +348,10 @@ class RiskManager:
         if not sess_ok:
             return False, sess_reason
 
+        corr_ok, corr_reason = self.check_correlation_exposure(symbol)
+        if not corr_ok:
+            return False, corr_reason
+
         news_blackout, news_reason, _ = self.news_filter.is_news_blackout(symbol)
         if news_blackout:
             return False, news_reason
@@ -309,16 +372,19 @@ class RiskManager:
             return False, f"Daily circuit breaker hit (-${abs(daily_pnl):.2f} / -${config.MAX_DAILY_LOSS_USD:.2f})."
 
         # Intraday High-Watermark (Peak Equity) Trailing Profit-Lock Circuit Breaker
-        # If intraday realized/unrealized profit reached at least $3.00 (e.g. 10% on $30 capital)
-        # and equity gives back 50% or more of that peak profit, halt new trades to secure daily gains.
+        # Dynamic threshold based on balance (e.g. 10% gain, min $3.00)
+        profit_lock_pct = getattr(config, "INTRADAY_PROFIT_LOCK_PCT", 0.10)
+        giveback_ratio = getattr(config, "INTRADAY_PROFIT_GIVEBACK_RATIO", 0.50)
+        min_lock_gain = max(3.0, self.daily_start_balance * profit_lock_pct)
         intraday_profit = self.daily_peak_equity - self.daily_start_balance
-        if intraday_profit >= 3.0:
+
+        if intraday_profit >= min_lock_gain:
             giveback = self.daily_peak_equity - acc["equity"]
-            if giveback >= (intraday_profit * 0.50):
+            if giveback >= (intraday_profit * giveback_ratio):
                 return False, (
                     f"Intraday trailing profit-lock circuit breaker: Equity pulled back ${giveback:.2f} "
                     f"from daily peak ${self.daily_peak_equity:.2f} (now ${acc['equity']:.2f}). "
-                    f"Protecting accumulated daily gains."
+                    f"Protecting accumulated daily gains (Threshold was ${min_lock_gain:.2f})."
                 )
 
         spread_pips = self.connector.get_current_spread_pips(symbol)

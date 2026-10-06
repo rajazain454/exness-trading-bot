@@ -444,6 +444,16 @@ def train_single_coin(symbol: str) -> Dict[str, Any]:
         use_vwap_filter=False
     )
 
+    # Walk-Forward 70/30 In-Sample vs Out-of-Sample Partitioning
+    split_idx = int(len(m5_data['close']) * 0.70)
+    m5_in = {k: v[:split_idx] for k, v in m5_data.items()}
+    m5_out = {k: v[split_idx:] for k, v in m5_data.items()}
+
+    split_time = m5_data['times'][split_idx]
+    h1_split_idx = max(25, int(np.searchsorted(h1_data['times'], split_time)))
+    h1_in = {k: v[:h1_split_idx] for k, v in h1_data.items()}
+    h1_out = {k: v[h1_split_idx:] for k, v in h1_data.items()}
+
     # Expanded Parameter grid for institutional training
     param_grid = {
         'chop_max': [58.0, 61.8],
@@ -461,8 +471,9 @@ def train_single_coin(symbol: str) -> Dict[str, Any]:
     best_params = None
 
     for p in permutations:
-        res = simulate_pure_r(
-            m5_data, h1_data, is_crypto,
+        # 1. In-sample optimization
+        res_in = simulate_pure_r(
+            m5_in, h1_in, is_crypto,
             chop_max=p['chop_max'],
             rsi_pullback_os=p['rsi_pullback_os'],
             z_score_limit=p['z_score_limit'],
@@ -471,18 +482,44 @@ def train_single_coin(symbol: str) -> Dict[str, Any]:
             use_adaptive_atr=True,
             use_vwap_filter=True
         )
-        if res['total_trades'] < 8:
+        if res_in['total_trades'] < 6:
             continue
 
-        # Mathematical Fitness Function in pure R-multiples:
-        pf = max(0.2, min(5.0, res['profit_factor']))
-        score = (res['total_r'] * pf) - (res['max_drawdown_r'] * 1.5)
+        # Institutional Risk-Adjusted Fitness Function (EV * sqrt(N) * PF - 2*DD)
+        pf_in = max(0.2, min(5.0, res_in['profit_factor']))
+        score = (res_in['ev_per_trade_r'] * (res_in['total_trades'] ** 0.5) * min(pf_in, 3.0)) - (res_in['max_drawdown_r'] * 2.0)
+
+        # 2. Out-of-sample walk-forward verification (prevent overfitting)
+        res_out = simulate_pure_r(
+            m5_out, h1_out, is_crypto,
+            chop_max=p['chop_max'],
+            rsi_pullback_os=p['rsi_pullback_os'],
+            z_score_limit=p['z_score_limit'],
+            base_tp_mult=p['base_tp_mult'],
+            base_sl_mult=p['base_sl_mult'],
+            use_adaptive_atr=True,
+            use_vwap_filter=True
+        )
+        # Require positive or neutral out-of-sample performance
+        if res_out['total_r'] < -1.0 or res_out['profit_factor'] < 0.8:
+            continue
+
         if score > best_score:
             best_score = score
-            best_res = res
             best_params = p
 
-    if best_res is None:
+    if best_params is not None:
+        best_res = simulate_pure_r(
+            m5_data, h1_data, is_crypto,
+            chop_max=best_params['chop_max'],
+            rsi_pullback_os=best_params['rsi_pullback_os'],
+            z_score_limit=best_params['z_score_limit'],
+            base_tp_mult=best_params['base_tp_mult'],
+            base_sl_mult=best_params['base_sl_mult'],
+            use_adaptive_atr=True,
+            use_vwap_filter=True
+        )
+    else:
         best_res = benchmark_res
         best_params = {'chop_max': 61.8, 'rsi_pullback_os': 45.0, 'z_score_limit': 1.8, 'base_tp_mult': 2.5, 'base_sl_mult': 1.5}
 
