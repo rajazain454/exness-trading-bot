@@ -1,13 +1,15 @@
 """
-Gold (XAUUSDm) Institutional Scalper Strategy
-Specialized high-probability scalping engine built specifically for Gold.
-Incorporates:
-- Session Liquidity Windows (London 07:00 UTC to NY 18:00 UTC)
-- Fast EMA 9/21 Dynamic Value Pullbacks
-- Institutional Wick Absorption (Buyer/Seller Defence)
-- Fractal Choppiness Guard (CHOP < 58.0)
-- Statistical Z-Score Overextension Floor
-- Session Anchored VWAP (Volume-Weighted Average Price)
+Gold (XAUUSDm) Institutional Multi-Strategy AI Engine
+Executes an institutional, regime-switching multi-strategy stack for Gold:
+1. Market Regime Classifier: TRENDING, RANGING, or BREAKOUT
+2. Specialized Strategy Engines:
+   - 🥇 Setup 1: Liquidity Sweep + Market Structure Shift (MSS) (Reversals)
+   - 🥈 Setup 2: Trend Pullback + Continuation (EMA 9/21/50, ADX >= 20)
+   - 🥉 Setup 3: Breakout + Retest (Session Range / Key Levels)
+   - 🔥 Setup 4: Fair Value Gap (FVG) + Structure Alignment
+   - ⚡ Setup 5: VWAP Range Mean Reversion (Ranging markets only)
+3. 100-Point Confluence Scoring Engine (A+ >= 80 pts, A >= 75 pts, < 75 NO TRADE)
+4. Strict "DO NOT TRADE" Gating System
 """
 
 from datetime import datetime, timezone
@@ -15,11 +17,12 @@ from typing import Dict, Any, Tuple, List, Optional
 import numpy as np
 import pandas as pd
 from gold_scalper import config_gold
+from gold_scalper.liquidity_gold import GoldLiquidityEngine
 
 
 class GoldScalperStrategy:
     """
-    High-Precision Scalper Strategy for Gold (XAUUSDm).
+    Institutional Multi-Strategy AI Scalper Engine for Gold (XAUUSDm).
     """
 
     def __init__(self):
@@ -30,9 +33,12 @@ class GoldScalperStrategy:
         self.chop_max = config_gold.MAX_CHOP_INDEX
         self.adx_min = config_gold.MIN_ADX_THRESHOLD
         self.z_max = config_gold.Z_SCORE_PULLBACK_MAX
+        self.min_wick_ratio = getattr(config_gold, "MIN_WICK_PERCENT", 15.0) / 100.0
+        self.liquidity_engine = GoldLiquidityEngine(sweep_min_usd=0.20, min_rejection_wick=self.min_wick_ratio)
+        self.min_confluence_threshold = 75  # Minimum score out of 100 to trigger a trade
 
-    def calculate_indicators(self, rates_data) -> pd.DataFrame:
-        """Calculates moving averages, RSI, ATR, ADX, CHOP, Z-score, and VWAP."""
+    def calculate_indicators(self, rates_data: Any) -> pd.DataFrame:
+        """Calculates moving averages, RSI, ATR, ADX, CHOP, Z-score, VWAP, and Bollinger Bands."""
         if rates_data is None or len(rates_data) == 0:
             return pd.DataFrame()
         df = pd.DataFrame(rates_data)
@@ -55,14 +61,14 @@ class GoldScalperStrategy:
         tr2 = (high - close.shift()).abs()
         tr3 = (low - close.shift()).abs()
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        df["atr"] = tr.rolling(window=self.atr_period).mean()
+        df["atr"] = tr.rolling(window=self.atr_period).mean().bfill()
 
         # RSI (14)
         delta = close.diff()
-        gain = delta.where(delta > 0, 0).ewm(alpha=1 / 14, adjust=False).mean()
-        loss = (-delta.where(delta < 0, 0)).ewm(alpha=1 / 14, adjust=False).mean()
+        gain = delta.where(delta > 0, 0.0).ewm(alpha=1 / 14, adjust=False).mean()
+        loss = (-delta.where(delta < 0, 0.0)).ewm(alpha=1 / 14, adjust=False).mean()
         rs = gain / (loss + 1e-9)
-        df["rsi"] = 100 - (100 / (1 + rs))
+        df["rsi"] = (100.0 - (100.0 / (1.0 + rs))).fillna(50.0)
 
         # ADX (14)
         up_move = high - high.shift()
@@ -70,107 +76,138 @@ class GoldScalperStrategy:
         plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
         minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
         tr_smooth = tr.ewm(alpha=1 / 14, adjust=False).mean()
-        plus_di = 100 * (pd.Series(plus_dm).ewm(alpha=1 / 14, adjust=False).mean() / (tr_smooth + 1e-9))
-        minus_di = 100 * (pd.Series(minus_dm).ewm(alpha=1 / 14, adjust=False).mean() / (tr_smooth + 1e-9))
-        dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di + 1e-9))
-        df["adx"] = dx.ewm(alpha=1 / 14, adjust=False).mean()
+        plus_di = 100.0 * (pd.Series(plus_dm, index=df.index).ewm(alpha=1 / 14, adjust=False).mean() / (tr_smooth + 1e-9))
+        minus_di = 100.0 * (pd.Series(minus_dm, index=df.index).ewm(alpha=1 / 14, adjust=False).mean() / (tr_smooth + 1e-9))
+        dx = 100.0 * ((plus_di - minus_di).abs() / (plus_di + minus_di + 1e-9))
+        df["adx"] = dx.ewm(alpha=1 / 14, adjust=False).mean().fillna(20.0)
 
         # Fractal Choppiness Index (14)
         atr_sum = tr.rolling(14).sum()
         high_max = high.rolling(14).max()
         low_min = low.rolling(14).min()
         price_range = (high_max - low_min) + 1e-9
-        safe_ratio = np.where(atr_sum > 1e-9, atr_sum / price_range, 14.0 ** 0.5)
-        safe_ratio = np.maximum(safe_ratio, 1e-9)
+        safe_ratio = np.maximum(np.where(atr_sum > 1e-9, atr_sum / price_range, 14.0 ** 0.5), 1e-9)
         df["chop"] = pd.Series(100.0 * np.log10(safe_ratio) / np.log10(14), index=df.index).fillna(50.0)
 
         # Z-Score (50-period)
         mean_50 = close.rolling(50).mean()
         std_50 = close.rolling(50).std()
-        df["z_score"] = (close - mean_50) / (std_50 + 1e-9)
+        df["z_score"] = ((close - mean_50) / (std_50 + 1e-9)).fillna(0.0)
 
-        # Institutional Volume Moving Average (20-period)
+        # Volume Moving Average (20-period)
         vol_period = getattr(config_gold, "VOLUME_MA_PERIOD", 20)
         df["vol_sma"] = vol.rolling(window=vol_period).mean().fillna(vol)
-        df["vol_ratio"] = vol / (df["vol_sma"] + 1e-9)
+        df["vol_ratio"] = (vol / (df["vol_sma"] + 1e-9)).fillna(1.0)
 
-        # Intraday VWAP (Anchored to London Open 08:00 UTC)
+        # Intraday VWAP (Anchored to 00:00 UTC)
         typical_price = (high + low + close) / 3.0
         pv = typical_price * vol
-        session_dates = (df["time_dt"] - pd.Timedelta(hours=8)).dt.date
-        df["vwap"] = pv.groupby(session_dates).cumsum() / (vol.groupby(session_dates).cumsum() + 1e-9)
+        dates = df["time_dt"].dt.date
+        df["cum_pv"] = pv.groupby(dates).cumsum()
+        df["cum_vol"] = vol.groupby(dates).cumsum() + 1e-9
+        df["vwap"] = df["cum_pv"] / df["cum_vol"]
+
+        # Bollinger Bands (20, 2.0 std) for Range Boundaries
+        bb_mean = close.rolling(20).mean()
+        bb_std = close.rolling(20).std()
+        df["bb_upper"] = bb_mean + (bb_std * 2.0)
+        df["bb_lower"] = bb_mean - (bb_std * 2.0)
+        df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / (bb_mean + 1e-9)
 
         return df
 
-    def analyze_h1_macro(self, h1_rates: Optional[Any] = None) -> str:
-        """Determines macro trend regime on Gold H1 candles using institutional EMA 50 & 200."""
-        if h1_rates is None or len(h1_rates) < 20:
-            return "NEUTRAL"
+    def classify_market_regime(self, curr: pd.Series, prev: pd.Series) -> str:
+        """
+        Classifies market regime into:
+        - TRENDING_BULLISH / TRENDING_BEARISH
+        - RANGING_CONSOLIDATION
+        - BREAKOUT_EXPANSION
+        """
+        adx = float(curr.get("adx", 20.0))
+        chop = float(curr.get("chop", 50.0))
+        close = float(curr.get("close", 0.0))
+        ema_f = float(curr.get("ema_fast", 0.0))
+        ema_s = float(curr.get("ema_slow", 0.0))
+        ema_t = float(curr.get("ema_trend", 0.0))
+        vol_ratio = float(curr.get("vol_ratio", 1.0))
+        atr = float(curr.get("atr", 2.0))
+        body = abs(float(curr.get("close", 0.0)) - float(curr.get("open", 0.0)))
+
+        # Breakout check: high volume expansion and wide body candle
+        if vol_ratio >= 1.8 and body >= (atr * 1.2):
+            return "BREAKOUT_EXPANSION"
+
+        # Trending check: ADX >= 21, CHOP <= 50, EMAs in stacked alignment
+        if adx >= 21.0 and chop <= 50.0:
+            if close > ema_t and ema_f > ema_s:
+                return "TRENDING_BULLISH"
+            elif close < ema_t and ema_f < ema_s:
+                return "TRENDING_BEARISH"
+
+        # Ranging check: ADX < 20 or CHOP >= 52
+        if adx < 20.0 or chop >= 52.0:
+            return "RANGING_CONSOLIDATION"
+
+        # Default fallback to trending or ranging based on EMA trend
+        if close > ema_t:
+            return "TRENDING_BULLISH"
+        elif close < ema_t:
+            return "TRENDING_BEARISH"
+        return "RANGING_CONSOLIDATION"
+
+    def analyze_h1_macro(self, h1_rates: Optional[List[Dict[str, Any]]]) -> str:
+        """Determines macro H1 trend baseline (EMA 50 / 200)."""
+        if h1_rates is None or len(h1_rates) < 55:
+            return "UNKNOWN"
         df_h1 = pd.DataFrame(h1_rates)
         close = df_h1["close"]
-        h1_fast = getattr(config_gold, "H1_EMA_FAST", 50)
-        h1_slow = getattr(config_gold, "H1_EMA_SLOW", 200)
-
-        # Fallback spans if fewer candles are returned by broker
-        fast_span = h1_fast if len(close) >= h1_fast else min(len(close), 20)
-        slow_span = h1_slow if len(close) >= h1_slow else len(close)
-
-        ema_fast = close.ewm(span=fast_span, adjust=False).mean().iloc[-1]
-        ema_slow = close.ewm(span=slow_span, adjust=False).mean().iloc[-1]
+        ema50 = close.ewm(span=50, adjust=False).mean().iloc[-1]
+        ema200 = close.ewm(span=200, adjust=False).mean().iloc[-1] if len(close) >= 200 else ema50
         c = close.iloc[-1]
-
-        if ema_fast > ema_slow and c > ema_fast:
+        if c > ema50 and c > ema200:
             return "BULLISH"
-        elif ema_fast < ema_slow and c < ema_fast:
+        elif c < ema50 and c < ema200:
             return "BEARISH"
         return "NEUTRAL"
 
-    def analyze_m1_microstructure(self, m1_rates: Optional[Any] = None) -> Dict[str, Any]:
-        """
-        Analyzes the latest M1 micro-candles to confirm reversal execution timing.
-        Ensures the bot does not sell into an active green candle surge or buy into a falling knife.
-        Requires genuine body momentum or rejection wick — tiny dojis are rejected.
-        """
+    def analyze_m1_microstructure(self, m1_rates: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+        """Analyzes latest M1 candles to verify micro displacement and rejection timing."""
         if m1_rates is None or len(m1_rates) < 2:
-            return {"bullish_confirmed": True, "bearish_confirmed": True, "reason": "M1 data omitted (default pass)"}
-
+            return {"bullish_confirmed": True, "bearish_confirmed": True, "reason": "M1 omitted (default pass)"}
         df_m1 = pd.DataFrame(m1_rates)
         curr = df_m1.iloc[-1]
-
-        c = curr["close"]
-        o = curr["open"]
-        h = curr["high"]
-        l = curr["low"]
+        c, o, h, l = curr["close"], curr["open"], curr["high"], curr["low"]
         rng = h - l + 1e-9
-
-        body = abs(c - o)
+        body_ratio = abs(c - o) / rng
         lower_wick = (min(o, c) - l) / rng
         upper_wick = (h - max(o, c)) / rng
-        body_ratio = body / rng
 
-        # Bullish M1 Reversal Confirmation:
-        # Candle is green with meaningful body (>=30%) OR significant lower wick absorption (>= 20%)
-        bullish = bool((c > o) and ((body_ratio >= 0.30) or (lower_wick >= 0.20)))
-
-        # Bearish M1 Reversal Confirmation:
-        # Candle is red with meaningful body (>=30%) OR significant upper wick rejection (>= 20%)
-        bearish = bool((c < o) and ((body_ratio >= 0.30) or (upper_wick >= 0.20)))
-
+        bullish = bool((c > o and body_ratio >= 0.25) or (lower_wick >= 0.20))
+        bearish = bool((c < o and body_ratio >= 0.25) or (upper_wick >= 0.20))
         return {
             "bullish_confirmed": bullish,
             "bearish_confirmed": bearish,
-            "reason": f"M1: Bull={bullish} (c={c:.2f}, o={o:.2f}, body={body_ratio*100:.0f}%, low_wick={lower_wick*100:.0f}%), Bear={bearish} (upper_wick={upper_wick*100:.0f}%)"
+            "reason": f"M1: Bull={bullish}, Bear={bearish}"
         }
 
-    def analyze(self, m5_rates: List[Dict[str, Any]], h1_rates: Optional[List[Dict[str, Any]]] = None, m1_rates: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    def analyze(
+        self,
+        m5_rates: List[Dict[str, Any]],
+        h1_rates: Optional[List[Dict[str, Any]]] = None,
+        m1_rates: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
         """
-        Executes institutional scalping analysis on Gold with M1 microstructure confirmation.
+        Executes Institutional Multi-Strategy Evaluation on Gold with 100-Point Confluence Scoring.
         """
         df = self.calculate_indicators(m5_rates)
         if df.empty or len(df) < self.ema_trend + 5:
             return {
                 "signal": "HOLD",
                 "confidence": 0.0,
+                "setup": "NONE",
+                "grade": "NONE",
+                "regime": "UNKNOWN",
+                "confluence_score": 0,
                 "reason": "Insufficient candles to compute indicators",
                 "metrics": {}
             }
@@ -178,39 +215,45 @@ class GoldScalperStrategy:
         curr = df.iloc[-1]
         prev = df.iloc[-2]
         now_utc = datetime.now(timezone.utc)
+        hour = now_utc.hour
 
-        close = curr["close"]
-        open_price = curr["open"]
-        high = curr["high"]
-        low = curr["low"]
-        ema_f = curr["ema_fast"]
-        ema_s = curr["ema_slow"]
-        ema_t = curr["ema_trend"]
-        rsi_val = curr["rsi"]
-        atr_val = curr["atr"] if not np.isnan(curr["atr"]) else 2.50
-        adx_val = curr["adx"] if not np.isnan(curr["adx"]) else 20.0
-        chop_val = curr["chop"] if not np.isnan(curr["chop"]) else 50.0
-        z_score = curr["z_score"] if not np.isnan(curr["z_score"]) else 0.0
-        vwap_val = curr["vwap"] if not np.isnan(curr["vwap"]) else close
-        vol_ratio = curr["vol_ratio"] if "vol_ratio" in curr and not np.isnan(curr["vol_ratio"]) else 1.0
+        # Base price metrics
+        close = float(curr["close"])
+        open_price = float(curr["open"])
+        high = float(curr["high"])
+        low = float(curr["low"])
+        ema_f = float(curr["ema_fast"])
+        ema_s = float(curr["ema_slow"])
+        ema_t = float(curr["ema_trend"])
+        rsi_val = float(curr["rsi"])
+        atr_val = float(curr["atr"])
+        adx_val = float(curr["adx"])
+        chop_val = float(curr["chop"])
+        z_score = float(curr["z_score"])
+        vwap_val = float(curr["vwap"])
+        vol_ratio = float(curr["vol_ratio"])
+        bb_upper = float(curr["bb_upper"])
+        bb_lower = float(curr["bb_lower"])
 
-        # Rejection wicks
-        c_range = high - low
-        if c_range > 0:
-            lower_wick = min(open_price, close) - low
-            upper_wick = high - max(open_price, close)
-            lower_wick_ratio = lower_wick / c_range
-            upper_wick_ratio = upper_wick / c_range
-        else:
-            lower_wick_ratio = 0.0
-            upper_wick_ratio = 0.0
+        c_range = high - low + 1e-9
+        lower_wick_ratio = (min(open_price, close) - low) / c_range
+        upper_wick_ratio = (high - max(open_price, close)) / c_range
 
+        # Classify Market Regime
+        regime = self.classify_market_regime(curr, prev)
         h1_trend = self.analyze_h1_macro(h1_rates)
-        min_wick = getattr(config_gold, "MIN_WICK_PERCENT", 25.0) / 100.0
+
+        # Compute SMC Session Levels
+        session_levels = self.liquidity_engine.compute_session_levels(df)
+        sweep_data = self.liquidity_engine.detect_liquidity_sweep(df, session_levels, lookback=5)
+        mss_data = self.liquidity_engine.detect_market_structure_shift(df, lookback=15)
+        fvgs = self.liquidity_engine.detect_fair_value_gaps(df, lookback=10)
+        m1_timing = self.analyze_m1_microstructure(m1_rates)
 
         metrics = {
             "symbol": "XAUUSDm",
             "close": round(close, 3),
+            "regime": regime,
             "ema_fast": round(ema_f, 3),
             "ema_slow": round(ema_s, 3),
             "ema_trend": round(ema_t, 3),
@@ -224,141 +267,215 @@ class GoldScalperStrategy:
             "lower_wick_pct": round(lower_wick_ratio * 100, 1),
             "upper_wick_pct": round(upper_wick_ratio * 100, 1),
             "h1_trend": h1_trend,
-            "utc_hour": now_utc.hour
+            "levels": session_levels,
+            "sweep": sweep_data,
+            "mss": mss_data
         }
 
         # -------------------------------------------------------------
-        # 1. SESSION FILTER: Gold should trade during active hours (08:00 - 16:00 UTC)
+        # STRICT "DO NOT TRADE" SAFETY GATES
         # -------------------------------------------------------------
+        # Gate 1: Session Gate (08:00 to 17:00 UTC)
         if config_gold.AVOID_ASIAN_SESSION:
-            hour = now_utc.hour
-            if hour < config_gold.SESSION_START_HOUR_UTC or hour >= config_gold.SESSION_END_HOUR_UTC:
+            start_h = getattr(config_gold, "SESSION_START_HOUR_UTC", 8)
+            end_h = getattr(config_gold, "SESSION_END_HOUR_UTC", 17)
+            if hour < start_h or hour >= end_h:
                 return {
                     "signal": "HOLD",
                     "confidence": 0.0,
-                    "reason": f"Session Guard: Outside active Gold trading hours ({config_gold.SESSION_START_HOUR_UTC:02d}:00 - {config_gold.SESSION_END_HOUR_UTC:02d}:00 UTC). Current: {hour:02d}:{now_utc.minute:02d} UTC.",
+                    "setup": "DO_NOT_TRADE_SESSION",
+                    "grade": "NONE",
+                    "regime": regime,
+                    "confluence_score": 0,
+                    "reason": f"Session Gate: Outside active London/NY hours ({start_h:02d}:00 - {end_h:02d}:00 UTC).",
                     "metrics": metrics
                 }
 
-        # -------------------------------------------------------------
-        # 2. CHOPPINESS GUARD: Block random consolidation (CHOP > 58.0)
-        # -------------------------------------------------------------
-        if chop_val > self.chop_max:
+        # Gate 2: Extreme Choppiness Gate (CHOP > 62.0)
+        if chop_val > 62.0:
             return {
                 "signal": "HOLD",
                 "confidence": 0.0,
-                "reason": f"Chop Guard: Gold in flat consolidation (CHOP {chop_val:.1f} > {self.chop_max}).",
+                "setup": "DO_NOT_TRADE_CHOP",
+                "grade": "NONE",
+                "regime": regime,
+                "confluence_score": 0,
+                "reason": f"Chop Gate: Gold in extreme flat compression (CHOP {chop_val:.1f} > 62.0).",
                 "metrics": metrics
             }
 
         # -------------------------------------------------------------
-        # 3. Z-SCORE OVEREXTENSION GUARD: Don't buy the absolute peak / sell the floor
+        # 100-POINT CONFLUENCE SCORING ENGINE
         # -------------------------------------------------------------
-        if abs(z_score) > self.z_max:
-            return {
-                "signal": "HOLD",
-                "confidence": 0.0,
-                "reason": f"Z-Score Guard: Price overextended from mean (Z = {z_score:+.2f}).",
-                "metrics": metrics
+        buy_score = 0
+        sell_score = 0
+        score_breakdown: Dict[str, Any] = {}
+        detected_setup = "NONE"
+
+        # --- 1. LIQUIDITY SWEEP EVALUATION (Max 25 pts) ---
+        sweep_pts_buy = 0
+        sweep_pts_sell = 0
+        if sweep_data.get("swept"):
+            if sweep_data.get("type") == "BULLISH_SWEEP":
+                sweep_pts_buy = 25
+                detected_setup = "SETUP_1_SWEEP_MSS"
+            elif sweep_data.get("type") == "BEARISH_SWEEP":
+                sweep_pts_sell = 25
+                detected_setup = "SETUP_1_SWEEP_MSS"
+
+        # --- 2. MARKET STRUCTURE SHIFT (MSS) (Max 20 pts) ---
+        mss_pts_buy = 0
+        mss_pts_sell = 0
+        if mss_data.get("mss"):
+            if mss_data.get("direction") == "BULLISH_MSS":
+                mss_pts_buy = 20
+                if detected_setup == "NONE":
+                    detected_setup = "SETUP_1_SWEEP_MSS"
+            elif mss_data.get("direction") == "BEARISH_MSS":
+                mss_pts_sell = 20
+                if detected_setup == "NONE":
+                    detected_setup = "SETUP_1_SWEEP_MSS"
+
+        # --- 3. TREND PULLBACK (Setup 2) (Max 25 pts) ---
+        pullback_buy = 0
+        pullback_sell = 0
+        if "TRENDING" in regime:
+            # Bullish EMA pullback
+            if ema_f > ema_s and close >= ema_t * 0.9995:
+                if (low <= ema_f * 1.0005 or low <= ema_s * 1.0008) and (lower_wick_ratio >= self.min_wick_ratio or close >= open_price):
+                    pullback_buy = 25
+                    if detected_setup == "NONE":
+                        detected_setup = "SETUP_2_TREND_PULLBACK"
+
+            # Bearish EMA pullback
+            if ema_f < ema_s and close <= ema_t * 1.0005:
+                if (high >= ema_f * 0.9995 or high >= ema_s * 0.9992) and (upper_wick_ratio >= self.min_wick_ratio or close <= open_price):
+                    pullback_sell = 25
+                    if detected_setup == "NONE":
+                        detected_setup = "SETUP_2_TREND_PULLBACK"
+
+        # --- 4. BREAKOUT + RETEST (Setup 3) (Max 20 pts) ---
+        retest_buy = 0
+        retest_sell = 0
+        asian_high = session_levels.get("asian_high", 0.0)
+        asian_low = session_levels.get("asian_low", 0.0)
+        if asian_high > 0 and close > asian_high and abs(low - asian_high) <= (atr_val * 0.40):
+            if lower_wick_ratio >= 0.15:
+                retest_buy = 20
+                if detected_setup == "NONE":
+                    detected_setup = "SETUP_3_BREAKOUT_RETEST"
+        if asian_low > 0 and close < asian_low and abs(high - asian_low) <= (atr_val * 0.40):
+            if upper_wick_ratio >= 0.15:
+                retest_sell = 20
+                if detected_setup == "NONE":
+                    detected_setup = "SETUP_3_BREAKOUT_RETEST"
+
+        # --- 5. VWAP RANGE MEAN REVERSION (Setup 5) (Max 25 pts) ---
+        vwap_mr_buy = 0
+        vwap_mr_sell = 0
+        if regime == "RANGING_CONSOLIDATION":
+            # Oversold at lower boundary -> Mean revert to VWAP
+            if close <= bb_lower or z_score <= -1.4:
+                if lower_wick_ratio >= 0.20 and close < vwap_val:
+                    vwap_mr_buy = 25
+                    detected_setup = "SETUP_5_VWAP_MEAN_REVERSION"
+            # Overbought at upper boundary -> Mean revert to VWAP
+            elif close >= bb_upper or z_score >= 1.4:
+                if upper_wick_ratio >= 0.20 and close > vwap_val:
+                    vwap_mr_sell = 25
+                    detected_setup = "SETUP_5_VWAP_MEAN_REVERSION"
+
+        # --- 6. FAIR VALUE GAP (FVG) CONFLUENCE (Max 15 pts) ---
+        fvg_buy = 0
+        fvg_sell = 0
+        if fvgs:
+            latest_fvg = fvgs[-1]
+            if latest_fvg["type"] == "BULLISH_FVG" and close >= latest_fvg["bottom"] and close <= (latest_fvg["top"] + 0.30):
+                fvg_buy = 15
+                if detected_setup == "NONE":
+                    detected_setup = "SETUP_4_FVG_CONFLUENCE"
+            elif latest_fvg["type"] == "BEARISH_FVG" and close <= latest_fvg["top"] and close >= (latest_fvg["bottom"] - 0.30):
+                fvg_sell = 15
+                if detected_setup == "NONE":
+                    detected_setup = "SETUP_4_FVG_CONFLUENCE"
+
+        # --- 7. MACRO H1 TREND ALIGNMENT (Max 15 pts) ---
+        macro_buy = 15 if h1_trend == "BULLISH" else (0 if h1_trend == "BEARISH" else 5)
+        macro_sell = 15 if h1_trend == "BEARISH" else (0 if h1_trend == "BULLISH" else 5)
+
+        # --- 8. VOLUME CONFIRMATION (Max 10 pts) ---
+        vol_confirmed = 10 if vol_ratio >= 1.10 else (5 if vol_ratio >= 0.90 else 0)
+
+        # --- 9. M1 MICRO TIMING CONFIRMATION (Max 10 pts) ---
+        m1_buy = 10 if m1_timing.get("bullish_confirmed") else 0
+        m1_sell = 10 if m1_timing.get("bearish_confirmed") else 0
+
+        # --- 10. SPREAD / VOLATILITY SAFETY (Max 5 pts) ---
+        spread_pts_val = 5  # Verified safe by order manager
+
+        # Calculate Combined Scores
+        # Note: Setups 1, 2, 3, 5 are primary drivers. Points stack based on confluence.
+        buy_score = max(sweep_pts_buy, pullback_buy, retest_buy, vwap_mr_buy) + mss_pts_buy + fvg_buy + macro_buy + vol_confirmed + m1_buy + spread_pts_val
+        sell_score = max(sweep_pts_sell, pullback_sell, retest_sell, vwap_mr_sell) + mss_pts_sell + fvg_sell + macro_sell + vol_confirmed + m1_sell + spread_pts_val
+
+        # Bound scores to 100
+        buy_score = min(100, buy_score)
+        sell_score = min(100, sell_score)
+
+        # Overextension check: suppress buy if Z-Score >= 1.5; suppress sell if Z-Score <= -1.5
+        if z_score >= self.z_max:
+            buy_score = 0
+        if z_score <= -self.z_max:
+            sell_score = 0
+
+        # Decision Threshold Logic (A+ >= 80, A >= 75)
+        final_signal = "HOLD"
+        final_score = 0
+        final_grade = "NONE"
+
+        if buy_score >= self.min_confluence_threshold and buy_score > sell_score:
+            final_signal = "BUY"
+            final_score = buy_score
+            final_grade = "A+" if buy_score >= 80 else "A"
+            score_breakdown = {
+                "core_setup": max(sweep_pts_buy, pullback_buy, retest_buy, vwap_mr_buy),
+                "mss": mss_pts_buy,
+                "fvg": fvg_buy,
+                "h1_macro": macro_buy,
+                "volume": vol_confirmed,
+                "m1_timing": m1_buy,
+                "spread_safety": spread_pts_val
             }
-
-        # -------------------------------------------------------------
-        # 4. ADX TREND STRENGTH FLOOR
-        # -------------------------------------------------------------
-        if adx_val < self.adx_min:
-            return {
-                "signal": "HOLD",
-                "confidence": 0.0,
-                "reason": f"ADX Guard: Trend momentum too weak ({adx_val:.1f} < {self.adx_min}).",
-                "metrics": metrics
+        elif sell_score >= self.min_confluence_threshold and sell_score > buy_score:
+            final_signal = "SELL"
+            final_score = sell_score
+            final_grade = "A+" if sell_score >= 80 else "A"
+            score_breakdown = {
+                "core_setup": max(sweep_pts_sell, pullback_sell, retest_sell, vwap_mr_sell),
+                "mss": mss_pts_sell,
+                "fvg": fvg_sell,
+                "h1_macro": macro_sell,
+                "volume": vol_confirmed,
+                "m1_timing": m1_sell,
+                "spread_safety": spread_pts_val
             }
+        else:
+            final_score = max(buy_score, sell_score)
+            final_grade = "B" if final_score >= 60 else "C"
 
-        # -------------------------------------------------------------
-        # BUY SCALP CONFLUENCE EVALUATION (Aligned with Institutional EA)
-        # -------------------------------------------------------------
-        m5_bullish = (ema_f > ema_s) and (close >= ema_t * 0.9995)
-        # Pullback into value: price touched or approached EMA fast/slow
-        pullback_touched_value = (low <= ema_f * 1.0005) or (low <= ema_s * 1.0008)
-        buyer_absorption_wick = (lower_wick_ratio >= min_wick) or (close >= open_price)
-        volume_confirmed = vol_ratio >= getattr(config_gold, "VOLUME_THRESHOLD_MULT", 1.10)
-
-        if m5_bullish and pullback_touched_value and buyer_absorption_wick:
-            if h1_trend == "BEARISH":
-                return {
-                    "signal": "HOLD",
-                    "confidence": 0.0,
-                    "reason": "Gold Buy suppressed: H1 Macro trend is BEARISH.",
-                    "metrics": metrics
-                }
-
-            # M1 Microstructure Reversal Timing Guard
-            m1_state = self.analyze_m1_microstructure(m1_rates)
-            if not m1_state.get("bullish_confirmed", True):
-                return {
-                    "signal": "HOLD",
-                    "confidence": 0.0,
-                    "reason": f"M1 Micro Guard: Waiting for M1 bullish reversal candle ({m1_state.get('reason', '')}).",
-                    "metrics": metrics
-                }
-
-            # Score confluence
-            score = 70
-            if h1_trend == "BULLISH": score += 10
-            if volume_confirmed: score += 10
-            if chop_val <= 45.0: score += 5
-            if lower_wick_ratio >= min_wick: score += 5
-            if close <= (vwap_val * 1.0008): score += 5  # Buying near/below institutional VWAP
-
-            return {
-                "signal": "BUY",
-                "confidence": round(min(score, 100) / 100.0, 4),
-                "reason": f"Gold Scalp BUY: H1={h1_trend}, M5 Bullish, EMA 9/21 pullback bounced, Vol={vol_ratio:.1f}x, M1 Confirmed, CHOP={chop_val:.1f}.",
-                "metrics": metrics
-            }
-
-        # -------------------------------------------------------------
-        # SELL SCALP CONFLUENCE EVALUATION (Aligned with Institutional EA)
-        # -------------------------------------------------------------
-        m5_bearish = (ema_f < ema_s) and (close <= ema_t * 1.0005)
-        pullback_rally_value = (high >= ema_f * 0.9995) or (high >= ema_s * 0.9992)
-        seller_absorption_wick = (upper_wick_ratio >= min_wick) or (close <= open_price)
-
-        if m5_bearish and pullback_rally_value and seller_absorption_wick:
-            if h1_trend == "BULLISH":
-                return {
-                    "signal": "HOLD",
-                    "confidence": 0.0,
-                    "reason": "Gold Sell suppressed: H1 Macro trend is BULLISH.",
-                    "metrics": metrics
-                }
-
-            # M1 Microstructure Reversal Timing Guard
-            m1_state = self.analyze_m1_microstructure(m1_rates)
-            if not m1_state.get("bearish_confirmed", True):
-                return {
-                    "signal": "HOLD",
-                    "confidence": 0.0,
-                    "reason": f"M1 Micro Guard: Waiting for M1 bearish reversal candle ({m1_state.get('reason', '')}).",
-                    "metrics": metrics
-                }
-
-            score = 70
-            if h1_trend == "BEARISH": score += 10
-            if volume_confirmed: score += 10
-            if chop_val <= 45.0: score += 5
-            if upper_wick_ratio >= min_wick: score += 5
-            if close >= (vwap_val * 0.9992): score += 5  # Selling near/above institutional VWAP
-
-            return {
-                "signal": "SELL",
-                "confidence": round(min(score, 100) / 100.0, 4),
-                "reason": f"Gold Scalp SELL: H1={h1_trend}, M5 Bearish, EMA 9/21 rally rejected, Vol={vol_ratio:.1f}x, M1 Confirmed, CHOP={chop_val:.1f}.",
-                "metrics": metrics
-            }
+        reason_str = (
+            f"Gold {final_signal} [{final_grade} | Score: {final_score}/100 | {detected_setup}]: "
+            f"Regime={regime}, H1={h1_trend}, Vol={vol_ratio:.1f}x, CHOP={chop_val:.1f}, Z={z_score:+.2f}."
+        )
 
         return {
-            "signal": "HOLD",
-            "confidence": 0.0,
-            "reason": f"Gold scanning. M5={'BULLISH' if m5_bullish else ('BEARISH' if m5_bearish else 'NEUTRAL')} | H1={h1_trend} | Vol={vol_ratio:.1f}x | CHOP={chop_val:.1f}.",
+            "signal": final_signal,
+            "confidence": round(final_score / 100.0, 4),
+            "setup": detected_setup,
+            "grade": final_grade,
+            "regime": regime,
+            "confluence_score": final_score,
+            "score_breakdown": score_breakdown,
+            "reason": reason_str,
             "metrics": metrics
         }

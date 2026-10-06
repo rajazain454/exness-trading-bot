@@ -226,6 +226,11 @@ class GoldScalperBot:
         metrics = analysis.get("metrics", {})
         sig = analysis.get("signal", "HOLD")
         conf = analysis.get("confidence", 0.0)
+        grade = analysis.get("grade", "NONE")
+        score = analysis.get("confluence_score", 0)
+        setup_name = analysis.get("setup", "NONE")
+        regime = analysis.get("regime", metrics.get("regime", "UNKNOWN"))
+        levels = metrics.get("levels", {})
         tick = mt5.symbol_info_tick(self.symbol)
         spread_pts = (tick.ask - tick.bid) / 0.001 if tick else 0
 
@@ -234,15 +239,18 @@ class GoldScalperBot:
         m_table.add_column("Status", justify="right")
         m_table.add_row("Gold Spot Price", f"[bold yellow]${tick.bid:.2f} / ${tick.ask:.2f}[/bold yellow]" if tick else "N/A")
         m_table.add_row("Spread", f"{spread_pts:.0f} pts (${spread_pts*0.001:.2f})")
-        m_table.add_row("M5 / H1 Trend", f"{metrics.get('close', 0.0)} | H1: [bold]{metrics.get('h1_trend', 'N/A')}[/bold]")
+        m_table.add_row("Market Regime", f"[bold cyan]{regime}[/bold cyan]")
+        m_table.add_row("Asian Range", f"${levels.get('asian_low', 0):.2f} - ${levels.get('asian_high', 0):.2f}")
         m_table.add_row("Volume Ratio", f"{metrics.get('vol_ratio', 1.0):.2f}x (SMA 20)")
         m_table.add_row("CHOP / ADX", f"CHOP: {metrics.get('chop', 0.0):.1f} | ADX: {metrics.get('adx', 0.0):.1f}")
         cd_display = "[bold green]READY[/bold green]" if not cooldown_active else f"[bold yellow]WAITING ({bars_remaining:.0f} M5 Bar)[/bold yellow]"
         m_table.add_row("Exit Cooldown", cd_display)
         cb_display = "[bold red]PAUSED (3 Losses)[/bold red]" if getattr(self, "circuit_breaker_active", False) else "[bold green]CLEAR[/bold green]"
         m_table.add_row("Circuit Breaker", cb_display)
-        m_table.add_row("Scalp Signal", f"[{'bold green' if sig == 'BUY' else ('bold red' if sig == 'SELL' else 'bold yellow')}]{sig}[/] ({conf*100:.0f}%)")
-        layout["market_box"].update(Panel(m_table, title="[bold]Gold Scalper Edge & Confluence[/bold]", border_style="gold1"))
+        sig_col = "bold green" if sig == "BUY" else ("bold red" if sig == "SELL" else "bold yellow")
+        m_table.add_row("Multi-Strat Setup", f"[bold magenta]{setup_name}[/bold magenta]")
+        m_table.add_row("Confluence Signal", f"[{sig_col}]{sig}[/] [[bold white]{grade}[/bold white]] ({score}/100 pts)")
+        layout["market_box"].update(Panel(m_table, title="[bold]Institutional Multi-Strategy Confluence[/bold]", border_style="gold1"))
 
         # Positions
         pos_table = Table(expand=True)
