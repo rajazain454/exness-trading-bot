@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
+from typing import Any
 
 # Ensure paths
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -25,6 +26,7 @@ from crypto_forex_bot.strategy import ForexConfluenceStrategy
 
 
 class TestCryptoSwingBotImprovements(unittest.TestCase):
+    connector: Any = None
 
     def setUp(self):
         self.connector = MagicMock()

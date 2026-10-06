@@ -25,16 +25,19 @@ class RiskManager:
     - Economic news blackout (ForexFactory integration)
     - Anti-Revenge Consecutive Loss Cooldown
     """
+    journal: Any = None
 
     def __init__(
         self,
-        connector,
-        notifier: Optional[DiscordNotifier] = None,
-        journal: Optional[TradeJournal] = None,
+        connector: Any,
+        notifier: Optional[Any] = None,
+        journal: Optional[Any] = None,
+        *args: Any,
+        **kwargs: Any,
     ):
         self.connector = connector
         self.notifier = notifier or DiscordNotifier()
-        self.journal = journal if journal is not None else TradeJournal()
+        self.journal = journal if journal is not None else kwargs.get("journal", TradeJournal())
         self.news_filter = EconomicNewsFilter(
             pre_buffer_mins=config.NEWS_PRE_BUFFER_MINS,
             post_buffer_mins=config.NEWS_POST_BUFFER_MINS
@@ -47,6 +50,11 @@ class RiskManager:
         self.symbol_cooldowns: Dict[str, datetime] = {}
         self.spread_history: Dict[str, List[float]] = {}
         self._sync_daily_balance()
+
+    def set_journal(self, journal: Any) -> "RiskManager":
+        """Explicit setter to configure or mock the TradeJournal instance."""
+        self.journal = journal
+        return self
 
     def _sync_daily_balance(self):
         """Initializes or resets daily balance checkpoint."""
