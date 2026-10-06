@@ -238,41 +238,53 @@ class ExnessTradingBot:
         if self.csm:
             self.csm.calculate_strengths()
 
-        best_candidate = {
-            "symbol": self.basket_symbols[0] if self.basket_symbols else "EURUSDm",
-            "signal": "HOLD",
-            "score": -1,
-            "metrics": {},
-            "reason": ""
-        }
+        best_candidate = None
 
         for sym in self.basket_symbols:
             m5_rates = self.connector.get_rates(sym, config.TIMEFRAME, count=250)
             h1_rates = self.connector.get_rates(sym, config.HIGHER_TIMEFRAME, count=250)
             analysis = self.strategy.analyze(m5_rates, h1_rates, csm_engine=self.csm, smc_engine=self.smc, symbol=sym)
 
-            score = analysis.get("score", 0)
+            score = int(analysis.get("score", 0))
             sig = analysis.get("signal", "HOLD")
+            candidate = {
+                "symbol": sym,
+                "signal": sig,
+                "score": score,
+                "metrics": analysis.get("metrics", {}),
+                "reason": analysis.get("reason", "")
+            }
 
-            if sig in ["BUY", "SELL"]:
-                if best_candidate["signal"] not in ["BUY", "SELL"] or score > best_candidate["score"]:
-                    best_candidate = {
-                        "symbol": sym,
-                        "signal": sig,
-                        "score": score,
-                        "metrics": analysis.get("metrics", {}),
-                        "reason": analysis.get("reason", "")
-                    }
+            if best_candidate is None:
+                best_candidate = candidate
+                continue
+
+            # Prioritize actionable trading signals over HOLD
+            if sig in ["BUY", "SELL"] and best_candidate["signal"] not in ["BUY", "SELL"]:
+                best_candidate = candidate
+            # If both have actionable signals, choose the higher confluence score
+            elif sig in ["BUY", "SELL"] and best_candidate["signal"] in ["BUY", "SELL"]:
+                if score > best_candidate.get("score", 0):
+                    best_candidate = candidate
+            # If neither has actionable signal, choose candidate with higher setup score or lower CHOP
             elif best_candidate["signal"] not in ["BUY", "SELL"]:
-                current_best_score = best_candidate.get("score", -1)
-                if score > current_best_score or current_best_score < 0:
-                    best_candidate = {
-                        "symbol": sym,
-                        "signal": sig,
-                        "score": score,
-                        "metrics": analysis.get("metrics", {}),
-                        "reason": analysis.get("reason", "")
-                    }
+                if score > best_candidate.get("score", 0):
+                    best_candidate = candidate
+                elif score == best_candidate.get("score", 0):
+                    curr_chop = candidate.get("metrics", {}).get("chop", 100.0)
+                    best_chop = best_candidate.get("metrics", {}).get("chop", 100.0)
+                    if curr_chop < best_chop:
+                        best_candidate = candidate
+
+        if best_candidate is None:
+            fallback_sym = self.basket_symbols[0] if self.basket_symbols else "EURUSDm"
+            best_candidate = {
+                "symbol": fallback_sym,
+                "signal": "HOLD",
+                "score": 0,
+                "metrics": {},
+                "reason": "Scanning basket..."
+            }
 
         return best_candidate
 
