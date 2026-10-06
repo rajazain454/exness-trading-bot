@@ -168,6 +168,8 @@ class GoldScalperBot:
 
         acc = mt5.account_info()
         # Dual-Wave Session State Indicator
+        now_utc = datetime.now(timezone.utc)
+        hour = now_utc.hour
         dec_hour = hour + (now_utc.minute / 60.0)
         w1_start = getattr(config_gold, "WAVE_1_START_HOUR_UTC", 8.0)
         w1_end = getattr(config_gold, "WAVE_1_END_HOUR_UTC", 11.5)
