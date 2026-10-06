@@ -67,7 +67,7 @@ class DiscordNotifier:
         if not self.enabled:
             return False
 
-        embed = {
+        embed: Dict[str, Any] = {
             "title": title,
             "description": description,
             "color": color,
@@ -198,7 +198,7 @@ class DiscordNotifier:
         ]
         self.send_embed(
             title="🌙 DAILY TRADING PERFORMANCE DIGEST",
-            description=f"Performance summary for {datetime.utcnow().strftime('%Y-%m-%d')} across active Exness sessions.",
+            description=f"Performance summary for {datetime.now(timezone.utc).strftime('%Y-%m-%d')} across active Exness sessions.",
             color=color,
             fields=fields
         )

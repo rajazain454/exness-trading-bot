@@ -85,6 +85,7 @@ class OrderManager(BaseOrderManager):
 
         s_info = mt5.symbol_info(symbol)
         digits = s_info.digits if s_info else 5
+        limit_offset = 0.0
 
         # Check entry mode: Market vs Limit Pullback
         if config.ENTRY_ORDER_TYPE == "LIMIT_PULLBACK":

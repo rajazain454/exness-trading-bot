@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.table import Table
 import MetaTrader5 as mt5
 import itertools
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 import config
 from mt5_connector import MT5Connector
@@ -53,7 +53,7 @@ class QuantBacktester:
         df_h1 = self.strategy.calculate_indicators(h1_rates)
 
         # Add vectorized ATR percentiles
-        df_m5["atr_pct"] = QuantitativeEngine.calculate_atr_percentile_series(df_m5["atr"], window=100)
+        df_m5["atr_pct"] = QuantitativeEngine.calculate_atr_percentile_series(pd.Series(df_m5["atr"], dtype=float), window=100)
 
         return df_m5, df_h1, pip_size
 
@@ -107,39 +107,42 @@ class QuantBacktester:
 
             # 1. Manage active trade
             if active_trade is not None:
-                trade_type = active_trade["type"]
-                entry_price = active_trade["entry_price"]
-                sl_price = active_trade["sl"]
-                tp_price = active_trade["tp"]
-                lot = active_trade["lot"]
-                be_locked = active_trade["be_locked"]
+                trade_type: str = str(active_trade["type"])
+                entry_price: float = float(active_trade["entry_price"])
+                sl_price: float = float(active_trade["sl"])
+                tp_price: float = float(active_trade["tp"])
+                lot: float = float(active_trade["lot"])
+                be_locked: bool = bool(active_trade["be_locked"])
+
+                high_val: float = float(curr_bar["high"])
+                low_val: float = float(curr_bar["low"])
 
                 # Break-Even logic
                 if not be_locked:
-                    if trade_type == "BUY" and (curr_bar["high"] - entry_price) >= be_trigger_dist:
+                    if trade_type == "BUY" and (high_val - entry_price) >= be_trigger_dist:
                         sl_price = entry_price + be_offset_dist
                         active_trade["sl"] = sl_price
                         active_trade["be_locked"] = True
-                    elif trade_type == "SELL" and (entry_price - curr_bar["low"]) >= be_trigger_dist:
+                    elif trade_type == "SELL" and (entry_price - low_val) >= be_trigger_dist:
                         sl_price = entry_price - be_offset_dist
                         active_trade["sl"] = sl_price
                         active_trade["be_locked"] = True
 
-                exit_price = None
-                outcome = None
+                exit_price: Optional[float] = None
+                outcome: Optional[str] = None
 
                 if trade_type == "BUY":
-                    if curr_bar["low"] <= sl_price:
+                    if low_val <= sl_price:
                         exit_price = sl_price
                         outcome = "WIN" if sl_price > entry_price else "LOSS"
-                    elif curr_bar["high"] >= tp_price:
+                    elif high_val >= tp_price:
                         exit_price = tp_price
                         outcome = "WIN"
                 elif trade_type == "SELL":
-                    if curr_bar["high"] >= sl_price:
+                    if high_val >= sl_price:
                         exit_price = sl_price
                         outcome = "WIN" if sl_price < entry_price else "LOSS"
-                    elif curr_bar["low"] <= tp_price:
+                    elif low_val <= tp_price:
                         exit_price = tp_price
                         outcome = "WIN"
 
@@ -187,12 +190,13 @@ class QuantBacktester:
                     continue
 
                 # Multi-Timeframe H1 Macro Trend alignment
-                h1_idx = np.searchsorted(h1_times, bar_time, side="right") - 1
+                h1_arr = np.asarray(h1_times)
+                h1_idx: int = int(np.searchsorted(h1_arr, bar_time, side="right")) - 1
                 if h1_idx < 0:
                     continue
-                h1_f = h1_fast[h1_idx]
-                h1_s = h1_slow[h1_idx]
-                h1_c = h1_close[h1_idx]
+                h1_f = float(h1_fast[h1_idx])
+                h1_s = float(h1_slow[h1_idx])
+                h1_c = float(h1_close[h1_idx])
 
                 h1_bullish = (h1_f > h1_s) and (h1_c > h1_f)
                 h1_bearish = (h1_f < h1_s) and (h1_c < h1_f)

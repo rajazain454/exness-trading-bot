@@ -20,7 +20,7 @@ class TradeJournal:
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path or DEFAULT_DB_PATH
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
+        self._conn: Optional[sqlite3.Connection] = sqlite3.connect(self.db_path, timeout=30.0, check_same_thread=False)
         self._init_db()
 
     def close(self):
@@ -254,9 +254,10 @@ class TradeJournal:
         backup_file = os.path.join(target_dir, f"trading_journal_{date_str}.db")
         try:
             with self._lock:
-                if getattr(self, "_conn", None):
+                conn = self._conn
+                if conn is not None:
                     backup_conn = sqlite3.connect(backup_file)
-                    self._conn.backup(backup_conn)
+                    conn.backup(backup_conn)
                     backup_conn.close()
                     logger.info(f"Journal: Database backed up successfully to {backup_file}")
                     return backup_file

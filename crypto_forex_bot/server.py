@@ -6,7 +6,7 @@ Serves the POST /predict endpoint with real-time quantitative confluence scoring
 
 import sys
 import os
-from typing import List, Optional, Any, Dict, Union
+from typing import List, Optional, Any, Dict, Union, cast
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
@@ -38,8 +38,8 @@ strategy = ForexConfluenceStrategy()
 
 
 class PredictRequest(BaseModel):
-    symbol: str = Field(..., example="EURUSDm")
-    timeframe: str = Field(default="M5", example="M5")
+    symbol: str = Field(..., description="Symbol e.g. EURUSDm", json_schema_extra={"example": "EURUSDm"})
+    timeframe: str = Field(default="M5", description="Timeframe e.g. M5", json_schema_extra={"example": "M5"})
     bars: List[List[Union[int, float]]] = Field(
         ...,
         description="List of OHLC bars: [time, open, high, low, close] or [time, open, high, low, close, tick_volume]"
@@ -101,7 +101,7 @@ def resample_to_h1(m5_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         "tick_volume": "sum"
     }).dropna().reset_index(drop=True)
 
-    return h1_df.to_dict(orient="records")
+    return cast(List[Dict[str, Any]], cast(Any, h1_df).to_dict(orient="records"))
 
 
 @app.get("/")
