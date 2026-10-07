@@ -1,5 +1,13 @@
 import sys
 import os
+
+# Add workspace root and package directory to sys.path
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_root_dir = os.path.dirname(_current_dir)
+for _d in [_root_dir, _current_dir]:
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt

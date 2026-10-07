@@ -6,8 +6,15 @@ from datetime import datetime, timezone
 import MetaTrader5 as mt5
 import config
 from notifier import DiscordNotifier
-from journal import TradeJournal
-from crypto_forex_bot.base_order_manager import BaseOrderManager
+try:
+    from journal import TradeJournal
+except ImportError:
+    from crypto_forex_bot.journal import TradeJournal
+
+try:
+    from crypto_forex_bot.base_order_manager import BaseOrderManager
+except ImportError:
+    from base_order_manager import BaseOrderManager
 
 logger = logging.getLogger("OrderManager")
 
