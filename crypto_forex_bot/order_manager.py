@@ -1,20 +1,34 @@
+import sys
+import os
 import logging
 import time
 import math
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 import MetaTrader5 as mt5
-import config
-from notifier import DiscordNotifier
+
+_PARENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PKG_DIR = os.path.dirname(os.path.abspath(__file__))
+for _d in [_PARENT_DIR, _PKG_DIR]:
+    if _d not in sys.path:
+        sys.path.insert(0, _d)
+
+try:
+    import config
+except ImportError:
+    from crypto_forex_bot import config
+
+try:
+    from notifier import DiscordNotifier
+except ImportError:
+    from crypto_forex_bot.notifier import DiscordNotifier
+
 try:
     from journal import TradeJournal
 except ImportError:
     from crypto_forex_bot.journal import TradeJournal
 
-try:
-    from crypto_forex_bot.base_order_manager import BaseOrderManager
-except ImportError:
-    from base_order_manager import BaseOrderManager
+from crypto_forex_bot.base_order_manager import BaseOrderManager
 
 logger = logging.getLogger("OrderManager")
 
