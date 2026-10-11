@@ -214,7 +214,8 @@ class OrderManager(BaseOrderManager):
             sl=req_sl,
             tp=req_tp,
             latency_ms=latency_ms,
-            slippage_pips=slippage_pips
+            slippage_pips=slippage_pips,
+            decision_basis=trade_params.get("decision_basis", trade_params)
         )
 
         return ticket

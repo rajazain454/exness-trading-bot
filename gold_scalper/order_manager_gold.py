@@ -244,7 +244,7 @@ class GoldOrderManager(BaseOrderManager):
                     except Exception as notify_err:
                         logger.warning(f"Discord notify error: {notify_err}")
 
-    def execute_scalp(self, sig: str, atr_val: float) -> Optional[int]:
+    def execute_scalp(self, sig: str, atr_val: float, decision_basis: Optional[Dict[str, Any]] = None) -> Optional[int]:
         """Executes a validated Gold scalp order with dynamic 1:2 R:R matching the EA."""
         # Double-check position count immediately
         current_positions = self.get_gold_positions()
@@ -330,6 +330,7 @@ class GoldOrderManager(BaseOrderManager):
                 tp=tp,
                 latency_ms=latency_ms,
                 slippage_pips=slippage_pips,
+                decision_basis=decision_basis,
             )
             logger.info(
                 f"⚡ EXECUTED {sig} on Gold #{res.order} | Lots: {lots:.2f} @ {executed_price:.2f} | "

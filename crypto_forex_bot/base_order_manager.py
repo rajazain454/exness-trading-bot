@@ -160,6 +160,7 @@ class BaseOrderManager:
         tp: float,
         latency_ms: float = 0.0,
         slippage_pips: float = 0.0,
+        decision_basis: Optional[Dict[str, Any]] = None,
     ):
         """Registers a freshly opened position into tracked state, SQLite journal, and Discord alerts."""
         self.tracked_positions[ticket] = {
@@ -175,6 +176,7 @@ class BaseOrderManager:
             "trailing_sl": float(sl),
             "last_trail_price": float(entry_price),
             "entry_time": time.time(),
+            "decision_basis": decision_basis or {},
         }
 
         try:
@@ -424,6 +426,34 @@ class BaseOrderManager:
                     )
             except Exception as j_err:
                 logger.warning(f"Journal exit recording failed for #{ticket}: {j_err}")
+
+            try:
+                from crypto_forex_bot.trade_logger import update_live_trade_files
+                bot_type = "gold" if "XAU" in trade_sym.upper() else "crypto"
+                outcome = "WIN" if pnl >= 0 else "LOSS"
+                hold_mins = 0
+                if meta.get("entry_time"):
+                    hold_mins = max(0, int((time.time() - meta["entry_time"]) / 60))
+                update_live_trade_files(
+                    bot_type=bot_type,
+                    ticket=ticket,
+                    symbol=trade_sym,
+                    signal=meta.get("signal", ""),
+                    lot=meta.get("lot", 0.01),
+                    entry_price=entry_p,
+                    exit_price=exit_price,
+                    sl=meta.get("sl", 0.0),
+                    tp=meta.get("tp", 0.0),
+                    pnl=pnl,
+                    pips=pips,
+                    outcome=outcome,
+                    close_reason=close_reason,
+                    duration_mins=hold_mins,
+                    decision_basis=meta.get("decision_basis", {}),
+                    balance=balance,
+                )
+            except Exception as tl_err:
+                logger.warning(f"Live trade markdown log error for #{ticket}: {tl_err}")
 
             if self.risk_manager and hasattr(self.risk_manager, "register_trade_outcome"):
                 self.risk_manager.register_trade_outcome(pnl >= 0)

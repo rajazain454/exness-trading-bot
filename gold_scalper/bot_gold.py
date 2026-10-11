@@ -156,9 +156,9 @@ class GoldScalperBot:
         active = self.get_gold_positions()
         return self.order_manager.manage_gold_positions(atr_val, current_m5_bar_time, positions=active)
 
-    def execute_scalp(self, sig: str, atr_val: float):
+    def execute_scalp(self, sig: str, atr_val: float, decision_basis: Optional[dict] = None):
         """Executes a validated Gold scalp order."""
-        return self.order_manager.execute_scalp(sig, atr_val)
+        return self.order_manager.execute_scalp(sig, atr_val, decision_basis=decision_basis)
 
     def build_dashboard(self, analysis: dict, active_positions: list, cooldown_active: bool = False, bars_remaining: float = 0.0) -> Layout:
         """Renders live terminal dashboard for Gold Scalper."""
@@ -428,7 +428,19 @@ class GoldScalperBot:
                             # Re-verify position count to prevent race conditions
                             fresh_positions = self.get_gold_positions()
                             if len(fresh_positions) < config_gold.MAX_OPEN_POSITIONS:
-                                self.execute_scalp(sig, atr_val)
+                                decision_snapshot = {
+                                    "setup": f"Institutional Gold Scalp (Grade {analysis.get('grade', 'A')})",
+                                    "grade": analysis.get("grade", "A"),
+                                    "chop": analysis.get("chop", 42.0),
+                                    "adx": analysis.get("adx", 25.0),
+                                    "z_score": analysis.get("z_score", 0.0),
+                                    "vol_ratio": analysis.get("vol_ratio", 1.0),
+                                    "p_win": analysis.get("ml_eval", {}).get("p_win", 0.60),
+                                    "ev_r": analysis.get("ml_eval", {}).get("ev_r", 0.20),
+                                    "wick_ratio": analysis.get("features", {}).get("wick_ratio", 0.18),
+                                    "h1_trend": analysis.get("h1_trend", "BULLISH"),
+                                }
+                                self.execute_scalp(sig, atr_val, decision_basis=decision_snapshot)
 
                     # 9. Render dashboard
                     dashboard = self.build_dashboard(analysis, active_positions, cooldown_active, bars_remaining)

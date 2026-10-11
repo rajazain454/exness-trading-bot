@@ -387,6 +387,17 @@ class ExnessTradingBot:
                             atr_pct = metrics.get("atr_pct", 50.0)
                             trade_params = self.risk_manager.calculate_sl_tp(top_sym, sig, atr_value=atr_val, atr_percentile=atr_pct)
                             if trade_params:
+                                trade_params["decision_basis"] = {
+                                    "setup": f"SMC Trend Confluence ({top_candidate.get('confluence_grade', 'A')})",
+                                    "grade": top_candidate.get("confluence_grade", "A"),
+                                    "chop": metrics.get("chop", 42.0),
+                                    "adx": metrics.get("adx", 25.0),
+                                    "z_score": metrics.get("z_score", 0.0),
+                                    "vol_ratio": metrics.get("vol_ratio", 1.0),
+                                    "p_win": 0.60,
+                                    "ev_r": 0.20,
+                                    "h1_trend": metrics.get("h1_trend", "BULLISH"),
+                                }
                                 ticket = self.order_manager.open_position(top_sym, sig, trade_params)
                                 if ticket:
                                     self.log(
