@@ -14,6 +14,7 @@ Executes the proven 1-year trained Gold Scalping Strategy:
 import sys
 import os
 import time
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 from rich.console import Console
 from rich.table import Table

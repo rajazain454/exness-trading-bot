@@ -91,7 +91,7 @@ class OrderManager(BaseOrderManager):
 
         return cancelled_count
 
-    def open_position(self, symbol: str, signal: str, trade_params: Dict[str, float]) -> Optional[int]:
+    def open_position(self, symbol: str, signal: str, trade_params: Dict[str, Any]) -> Optional[int]:
         """
         Executes order (Market or Limit Pullback) with precision latency & slippage tracking.
         Logs metrics to SQLite journal and dispatches Discord notification.
@@ -215,7 +215,7 @@ class OrderManager(BaseOrderManager):
             tp=req_tp,
             latency_ms=latency_ms,
             slippage_pips=slippage_pips,
-            decision_basis=trade_params.get("decision_basis", trade_params)
+            decision_basis=trade_params.get("decision_basis") if isinstance(trade_params.get("decision_basis"), dict) else dict(trade_params)
         )
 
         return ticket
