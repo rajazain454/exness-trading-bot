@@ -84,6 +84,7 @@ class GoldScalperBot:
         self.logs = []
         self.circuit_breaker_active = False
         self.circuit_breaker_until_bar = 0
+        self.daily_report_date = None
 
         # Initialize Economic News Filter
         self.news_filter = None
@@ -160,6 +161,28 @@ class GoldScalperBot:
     def execute_scalp(self, sig: str, atr_val: float, decision_basis: Optional[dict] = None):
         """Executes a validated Gold scalp order."""
         return self.order_manager.execute_scalp(sig, atr_val, decision_basis=decision_basis)
+
+    def check_daily_report(self):
+        """Sends rich End-of-Day performance digest to Discord at 00:00 UTC."""
+        now_utc = datetime.now(timezone.utc)
+        today = now_utc.date()
+        target_hour = getattr(config_gold, "DAILY_REPORT_HOUR_UTC", 0)
+
+        if now_utc.hour == target_hour and self.daily_report_date != today:
+            if hasattr(self, "journal") and self.journal:
+                digest = self.journal.get_daily_digest()
+                acc = mt5.account_info()
+                balance = acc.balance if acc else 0.0
+                equity = acc.equity if acc else 0.0
+                if digest.get("total", 0) > 0 and hasattr(self, "notifier") and self.notifier:
+                    self.notifier.notify_daily_summary(
+                        summary=digest,
+                        balance=balance,
+                        equity=equity
+                    )
+                    self.log(f"🌙 Dispatched 00:00 UTC Daily Performance Digest to Discord (PnL: ${digest.get('net_pnl', 0.0):+.2f}).", "SUCCESS")
+                self.journal.backup_database()
+            self.daily_report_date = today
 
     def build_dashboard(self, analysis: dict, active_positions: list, cooldown_active: bool = False, bars_remaining: float = 0.0) -> Layout:
         """Renders live terminal dashboard for Gold Scalper."""
@@ -322,6 +345,9 @@ class GoldScalperBot:
                         self.log("⚠️ MT5 connection drop detected. Auto-reconnecting to Exness...", "WARN")
                         time.sleep(3)
                         continue
+
+                    # Check End-of-Day 00:00 UTC report
+                    self.check_daily_report()
 
                     # 1. Fetch data: M5 primary, H1 macro (220 bars for EMA 50/200), M1 micro-structure
                     m5_rates = self.connector.get_rates(self.symbol, config_gold.TIMEFRAME, count=100)

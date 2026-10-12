@@ -102,3 +102,4 @@ NEWS_FILTER_ENABLED = True   # Halt 30m before and after High-Impact US news
 NEWS_PRE_BUFFER_MINS = 30    # Minutes before news event to halt entries
 NEWS_POST_BUFFER_MINS = 30   # Minutes after news event to resume entries
 MAGIC_NUMBER = 777001        # Unique Magic Number for Gold Scalper
+DAILY_REPORT_HOUR_UTC = 0    # 00:00 UTC End-of-Day Digest

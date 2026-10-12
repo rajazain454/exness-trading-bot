@@ -169,22 +169,26 @@ class ExnessTradingBot:
             self.last_heartbeat_time = now
 
     def check_daily_report(self):
-        """Sends daily performance digest to Discord at target UTC hour."""
+        """Sends rich End-of-Day performance digest to Discord at 00:00 UTC."""
         now_utc = datetime.now(timezone.utc)
         today = now_utc.date()
-        if now_utc.hour >= config.DAILY_REPORT_HOUR_UTC and self.daily_report_date != today:
-            summary = self.order_manager.journal.get_today_summary()
-            acc = self.connector.get_account_summary()
-            if acc and summary["total"] > 0:
-                self.order_manager.notifier.notify_daily_summary(
-                    summary=summary,
-                    balance=acc.get("balance", 0.0),
-                    equity=acc.get("equity", 0.0)
-                )
-            if hasattr(self, "journal") and self.journal:
-                self.journal.backup_database()
-            elif self.order_manager and self.order_manager.journal:
-                self.order_manager.journal.backup_database()
+        target_hour = getattr(config, "DAILY_REPORT_HOUR_UTC", 0)
+
+        # Trigger if current UTC hour matches 00:00 UTC target hour and not yet dispatched for today
+        if now_utc.hour == target_hour and self.daily_report_date != today:
+            journal = self.journal or (self.order_manager.journal if self.order_manager else None)
+            if journal:
+                # Compile comprehensive digest for the concluding day
+                digest = journal.get_daily_digest()
+                acc = self.connector.get_account_summary()
+                if acc and digest.get("total", 0) > 0:
+                    self.order_manager.notifier.notify_daily_summary(
+                        summary=digest,
+                        balance=acc.get("balance", 0.0),
+                        equity=acc.get("equity", 0.0)
+                    )
+                    self.log(f"🌙 Dispatched 00:00 UTC Daily Performance Digest to Discord (PnL: ${digest.get('net_pnl', 0.0):+.2f}).", "SUCCESS")
+                journal.backup_database()
             self.daily_report_date = today
 
     def build_dashboard(self, top_candidate: dict, active_positions: list) -> Layout:

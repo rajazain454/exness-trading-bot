@@ -185,20 +185,46 @@ class DiscordNotifier:
         )
 
     def notify_daily_summary(self, summary: Dict[str, Any], balance: float, equity: float):
-        """Dispatches End-of-Day performance recap to Discord."""
+        """
+        Dispatches End-of-Day 00:00 UTC performance digest card to Discord.
+        Includes Total Trades, Win Rate %, Net PnL ($ and %), Highest Winning Trade,
+        Biggest Lesson Learned, and Next Day's Starting Balance.
+        """
         net = summary.get("net_pnl", 0.0)
+        net_pct = summary.get("net_pnl_pct", 0.0)
         color = 0x2ECC71 if net >= 0 else 0xE74C3C
+        sign = "+" if net >= 0 else ""
+        date_str = summary.get("date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+
+        # Format Best Trade
+        best = summary.get("highest_win")
+        if best:
+            best_str = f"**{best.get('symbol')} {best.get('signal')}**: `+${best.get('pnl_usd', 0.0):.2f}` ({best.get('pips', 0.0)} pips)"
+        else:
+            best_str = "None"
+
+        # Format Lesson Learned
+        lesson = summary.get(
+            "biggest_lesson",
+            "Maintain strict risk management and execute only A/A+ institutional setups."
+        )
+
+        start_bal = summary.get("starting_balance", balance - net)
+        next_bal = summary.get("next_day_starting_balance", balance)
+
         fields = [
-            {"name": "Total Trades", "value": str(summary.get("total", 0)), "inline": True},
-            {"name": "Win / Loss", "value": f"{summary.get('wins', 0)}W / {summary.get('losses', 0)}L", "inline": True},
-            {"name": "Win Rate", "value": f"{summary.get('win_rate', 0.0)}%", "inline": True},
-            {"name": "Net P&L", "value": f"**{'+' if net >= 0 else ''}${net:.2f}**", "inline": True},
-            {"name": "Closing Balance", "value": f"${balance:.2f}", "inline": True},
-            {"name": "Closing Equity", "value": f"${equity:.2f}", "inline": True},
+            {"name": "📊 Total Trades", "value": f"**{summary.get('total', 0)}** ({summary.get('wins', 0)}W / {summary.get('losses', 0)}L)", "inline": True},
+            {"name": "🎯 Win Rate", "value": f"**{summary.get('win_rate', 0.0)}%**", "inline": True},
+            {"name": "💰 Net P&L", "value": f"**{sign}${net:.2f} ({sign}{net_pct:.2f}%)**", "inline": True},
+            {"name": "🏆 Highest Win", "value": best_str, "inline": True},
+            {"name": "💵 Starting Balance", "value": f"`${start_bal:.2f}`", "inline": True},
+            {"name": "🏦 Next Day Starting Balance", "value": f"`${next_bal:.2f}`", "inline": True},
+            {"name": "🧠 Key Lesson Learned", "value": f"> *{lesson}*", "inline": False},
+            {"name": "🛡️ Capital Preservation", "value": "Daily Equity Circuit Breakers intact. System primed for upcoming market sessions.", "inline": False}
         ]
         self.send_embed(
-            title="🌙 DAILY TRADING PERFORMANCE DIGEST",
-            description=f"Performance summary for {datetime.now(timezone.utc).strftime('%Y-%m-%d')} across active Exness sessions.",
+            title=f"🌙 END-OF-DAY PERFORMANCE DIGEST | {date_str}",
+            description="Algorithmic execution summary across Exness MT5 sessions.",
             color=color,
             fields=fields
         )

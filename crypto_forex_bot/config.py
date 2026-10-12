@@ -185,7 +185,7 @@ FRIDAY_CUTOFF_HOUR_UTC = 20
 # HEARTBEAT & DAILY REPORT
 # ==========================================
 HEARTBEAT_INTERVAL_MINUTES = 60
-DAILY_REPORT_HOUR_UTC = 20
+DAILY_REPORT_HOUR_UTC = 0  # Automatically compiles & dispatches End-of-Day digest at 00:00 UTC
 
 # ==========================================
 # ENGINE INTERNALS
