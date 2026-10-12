@@ -136,14 +136,20 @@ def _apply_crypto_adaptive_penalty(symbol: str, category: str):
 def _apply_gold_ml_adaptive_penalty(category: str):
     """Adjusts institutional weights slightly to learn from recent loss."""
     weights_path = os.path.join(GOLD_DIR, "gold_ml_weights.json")
-    if not os.path.exists(weights_path):
-        return
     try:
-        with open(weights_path, "r") as f:
-            data = json.load(f)
+        data: Dict[str, Any] = {}
+        if os.path.exists(weights_path):
+            with open(weights_path, "r") as f:
+                data = json.load(f)
+        else:
+            from gold_scalper.ml_gold import GoldMLProbabilityEngine
+            engine = GoldMLProbabilityEngine()
+            data = {"weights": engine._default_weights()}
+
         weights = data.get("weights", {})
-        if category == "CHOP_EXPANSION_TRAP":
+        if category in ["CHOP_EXPANSION_TRAP", "LIQUIDITY_HUNT_SPIKE"]:
             weights["chop_penalty"] = round(weights.get("chop_penalty", -0.030) - 0.005, 4)
+            weights["wick_absorption"] = round(weights.get("wick_absorption", 1.200) + 0.05, 4)
         elif category == "EXHAUSTED_SPIKE_TRAP":
             weights["z_score_penalty"] = round(weights.get("z_score_penalty", -0.350) - 0.020, 4)
         elif category == "VOLUME_FAKEOUT_TRAP":
@@ -151,6 +157,7 @@ def _apply_gold_ml_adaptive_penalty(category: str):
 
         data["weights"] = weights
         data["last_adapted"] = datetime.now(timezone.utc).isoformat()
+        data["last_adaptation_cause"] = category
         with open(weights_path, "w") as f:
             json.dump(data, f, indent=2)
     except Exception:
