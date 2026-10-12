@@ -1,0 +1,18 @@
+{
+  "weights": {
+    "intercept": -1.2,
+    "core_setup": 0.045,
+    "mss_displacement": 0.035,
+    "fvg_confluence": 0.025,
+    "h1_trend_alignment": 0.04,
+    "volume_ratio": 0.55,
+    "m1_displacement": 0.45,
+    "m1_bos": 0.6,
+    "chop_penalty": -0.035,
+    "adx_strength": 0.02,
+    "z_score_penalty": -0.35,
+    "wick_absorption": 1.25
+  },
+  "last_adapted": "2026-10-12T11:07:55.121342+00:00",
+  "last_adaptation_cause": "LIQUIDITY_HUNT_SPIKE"
+}

@@ -312,3 +312,49 @@
 > Setup respected structure. Profit banked within target parameters. Cooldown active for 1 M5 candle before re-scanning.
 
 ---
+
+### 📊 Trade #12345 | XAUUSDm BUY (2026-10-12 11:08:14 UTC)
+* **Outcome**: **🟢 PROFIT HIT** | **Realized PnL**: `+$4.90` (+500.0 pips)
+* **Exit Reason**: `Take Profit Hit`
+* **Execution Parameters**:
+  * **Entry Price**: `2000.000`
+  * **Planned SL**: `1997.000` (Risk: $3.00)
+  * **Planned TP**: `2005.000` (Target: $5.00)
+  * **Actual Exit**: `2005.000`
+
+* **Decision Basis & Strategy Confluence**:
+  * **Core Setup**: `Dynamic 9/21 Pullback` (Grade: `A`)
+  * **Choppiness Index**: `42.0` (Reference: `< 50` = Trending)
+  * **Trend Strength (ADX)**: `28.0`
+  * **Z-Score from VWAP**: `0.50` (Exhaustion guard: `< 1.4`)
+  * **Volume Surge Ratio**: `1.10x` average
+  * **ML Win Probability $P(Win)$**: `60.0%` | **Expected Value $E[R]$**: `+0.25R`
+
+> [!TIP]
+> #### ✅ Successful Execution Takeaway:
+> Setup respected structure. Profit banked within target parameters. Cooldown active for 1 M5 candle before re-scanning.
+
+---
+
+### 📊 Trade #12345 | XAUUSDm BUY (2026-10-12 11:11:48 UTC)
+* **Outcome**: **🟢 PROFIT HIT** | **Realized PnL**: `+$4.90` (+500.0 pips)
+* **Exit Reason**: `Take Profit Hit`
+* **Execution Parameters**:
+  * **Entry Price**: `2000.000`
+  * **Planned SL**: `1997.000` (Risk: $3.00)
+  * **Planned TP**: `2005.000` (Target: $5.00)
+  * **Actual Exit**: `2005.000`
+
+* **Decision Basis & Strategy Confluence**:
+  * **Core Setup**: `Dynamic 9/21 Pullback` (Grade: `A`)
+  * **Choppiness Index**: `42.0` (Reference: `< 50` = Trending)
+  * **Trend Strength (ADX)**: `28.0`
+  * **Z-Score from VWAP**: `0.50` (Exhaustion guard: `< 1.4`)
+  * **Volume Surge Ratio**: `1.10x` average
+  * **ML Win Probability $P(Win)$**: `60.0%` | **Expected Value $E[R]$**: `+0.25R`
+
+> [!TIP]
+> #### ✅ Successful Execution Takeaway:
+> Setup respected structure. Profit banked within target parameters. Cooldown active for 1 M5 candle before re-scanning.
+
+---
