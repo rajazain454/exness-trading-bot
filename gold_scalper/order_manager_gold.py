@@ -279,11 +279,16 @@ class GoldOrderManager(BaseOrderManager):
         tp = round(entry + tp_dist if sig == "BUY" else entry - tp_dist, digits)
 
         acc = mt5.account_info()
-        equity = acc.equity if acc else 30.0
-        risk_usd = equity * (config_gold.RISK_PER_TRADE_PERCENT / 100.0)
-        loss_per_lot = stop_dist * 100.0
-        calc_lots = round(risk_usd / max(loss_per_lot, 1e-9), 2)
-        lots = max(info.volume_min, min(info.volume_max, calc_lots if calc_lots >= info.volume_min else info.volume_min))
+        equity = acc.equity if acc else 80.0
+
+        # Two-Tier Profit Scaling ($75-$100 Milestone)
+        # Unlocks institutional 50% TP1 partial profit-taking (0.01 banked) + 50% runner (0.01)
+        if getattr(config_gold, "ENABLE_TWO_TIER_SCALING", True) and equity >= getattr(config_gold, "TWO_TIER_EQUITY_THRESHOLD", 75.0):
+            target_lots = getattr(config_gold, "SCALED_LOT_SIZE", 0.02)
+        else:
+            target_lots = getattr(config_gold, "BASE_LOT_SIZE", 0.01)
+
+        lots = max(info.volume_min, min(info.volume_max, target_lots))
 
         req = {
             "action": mt5.TRADE_ACTION_DEAL,

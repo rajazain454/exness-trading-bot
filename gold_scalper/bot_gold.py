@@ -240,11 +240,13 @@ class GoldScalperBot:
         acc_table.add_row("Floating P&L", f"[{'bold green' if floating >= 0 else 'bold red'}]${floating:+.2f}[/]")
         acc_table.add_row("Free Margin", f"${acc.margin_free:.2f}" if acc else "N/A")
         tick_tmp = mt5.symbol_info_tick(self.symbol)
-        needed_margin = (mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, self.symbol, 0.01, tick_tmp.ask) if tick_tmp else 20.65) or 20.65
+        target_lot = getattr(config_gold, "SCALED_LOT_SIZE", 0.02) if (acc and acc.equity >= getattr(config_gold, "TWO_TIER_EQUITY_THRESHOLD", 75.0)) else getattr(config_gold, "BASE_LOT_SIZE", 0.01)
+        needed_margin = (mt5.order_calc_margin(mt5.ORDER_TYPE_BUY, self.symbol, target_lot, tick_tmp.ask) if tick_tmp else (41.60 if target_lot >= 0.02 else 20.80)) or 20.80
+        tier_tag = " (Two-Tier Scaling ON)" if target_lot >= 0.02 else ""
         if acc and acc.margin_free < needed_margin:
-            acc_table.add_row("0.01 Lot Margin", f"[bold red]${needed_margin:.2f} (SHORT ${needed_margin - acc.margin_free:.2f})[/bold red]")
+            acc_table.add_row(f"{target_lot:.2f} Lot Margin", f"[bold red]${needed_margin:.2f} (SHORT ${needed_margin - acc.margin_free:.2f})[/bold red]")
         else:
-            acc_table.add_row("0.01 Lot Margin", f"[bold green]${needed_margin:.2f} (Ready)[/bold green]")
+            acc_table.add_row(f"{target_lot:.2f} Lot Margin", f"[bold green]${needed_margin:.2f} (Ready{tier_tag})[/bold green]")
 
         max_daily_loss = getattr(config_gold, "MAX_DAILY_LOSS_USD", 5.00)
         daily_loss_hit = False

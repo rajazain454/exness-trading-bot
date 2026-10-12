@@ -280,12 +280,25 @@ class RiskManager:
             multiplier = int(equity // config.CAPITAL_PER_001_LOT)
             lot = round(max(config.BASE_LOT_SIZE, multiplier * config.BASE_LOT_SIZE), 2)
 
+        # Two-Tier Profit Scaling Threshold ($75-$100 Milestone)
+        # On micro accounts (< $75 equity), enforce BASE_LOT_SIZE (0.01 lot) to prevent over-leveraging.
+        # On accounts with $75 - $150 equity, scale lot size to exactly 0.02 lots
+        # to ensure optimal risk while unlocking dual-tier Partial TP (0.01 TP1 + 0.01 runner).
+        if getattr(config, "ENABLE_TWO_TIER_SCALING", True):
+            threshold = getattr(config, "TWO_TIER_EQUITY_THRESHOLD", 75.0)
+            if equity < threshold:
+                lot = getattr(config, "BASE_LOT_SIZE", 0.01)
+            elif threshold <= equity < 150.0:
+                lot = getattr(config, "SCALED_LOT_SIZE", 0.02)
+
         # Equity Curve Throttle: reduce risk by 50% during consecutive losses or negative daily drift
-        if hasattr(self, "journal") and self.journal:
+        if self.consecutive_losses >= 2:
+            lot = max(config.BASE_LOT_SIZE, round(lot * 0.5, 2))
+        elif hasattr(self, "journal") and self.journal:
             try:
                 stats = self.journal.get_today_summary()
-                if stats.get("net_pnl", 0.0) < -2.0 or stats.get("losses", 0) >= 2:
-                    lot = max(config.BASE_LOT_SIZE, lot * 0.5)
+                if stats.get("net_pnl", 0.0) < -2.0:
+                    lot = max(config.BASE_LOT_SIZE, round(lot * 0.5, 2))
             except Exception:
                 pass
 

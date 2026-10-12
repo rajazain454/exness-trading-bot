@@ -128,15 +128,18 @@ MIDDAY_LULL_FILTER_ENABLED = True      # Pause Forex between 11:30 and 13:00 UTC
 # RISK MANAGEMENT & AUTO-COMPOUNDING
 # ==========================================
 BASE_LOT_SIZE = 0.01
-MAX_OPEN_POSITIONS = 1        # Strictly 1 position across account for $30 capital
+ENABLE_TWO_TIER_SCALING = True        # Automatically scale lot size to 0.02 once equity >= $75
+TWO_TIER_EQUITY_THRESHOLD = 75.0      # $75 - $80 milestone
+SCALED_LOT_SIZE = 0.02                # 0.02 lot enables 50% TP1 partial close (0.01) + runner (0.01)
+MAX_OPEN_POSITIONS = 1               # Strictly 1 position across account for $30-$80 capital
 
 ENABLE_COMPOUNDING = True
-CAPITAL_PER_001_LOT = 30.0
+CAPITAL_PER_001_LOT = 40.0
 MAX_LOT_SIZE = 0.10
 
 MAX_CONSECUTIVE_LOSSES = 2
 COOLDOWN_HOURS = 3
-MAX_DAILY_LOSS_USD = 5.0
+MAX_DAILY_LOSS_USD = 8.0              # Scaled daily loss limit ($8.00 on $80 account)
 INTRADAY_PROFIT_LOCK_PCT = 0.10        # Trailing profit lock triggers at +10% of starting balance
 INTRADAY_PROFIT_GIVEBACK_RATIO = 0.50  # Halt if 50% of peak profit is given back
 

@@ -63,8 +63,12 @@ SESSION_END_HOUR_UTC = 17
 # SCALPING RISK & POSITION SIZING
 # ==========================================
 RISK_PER_TRADE_PERCENT = 0.50 # Risk 0.50% equity per scalp (suitable for $25 - $1000 accounts)
+ENABLE_TWO_TIER_SCALING = True # Automatically scale lot size to 0.02 once equity >= $75
+TWO_TIER_EQUITY_THRESHOLD = 75.0 # $75 - $80 milestone
+BASE_LOT_SIZE = 0.01          # Minimum lot size for micro accounts under $75
+SCALED_LOT_SIZE = 0.02        # 0.02 lot enables 50% TP1 partial close (0.01) + runner (0.01)
 MAX_OPEN_POSITIONS = 1       # Strict 1 position max at any time
-MAX_DAILY_LOSS_USD = 5.00    # Hard equity stop on a small account ($5.00)
+MAX_DAILY_LOSS_USD = 8.00    # Hard daily equity stop (scaled to $8.00 on $80 account)
 MAX_DAILY_TRADES = None      # No trade count limits (unlimited trades when valid setups occur)
 BAR_COOLDOWN_M5_COUNT = 1    # Default cooldown (1 completed M5 candle)
 COOLDOWN_BARS_AFTER_WIN = 1   # 1 M5 candle (5 mins) cooldown after TP / profitable exit
