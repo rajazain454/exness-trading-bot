@@ -505,6 +505,16 @@ class GoldScalperStrategy:
         if z_score <= -self.z_max:
             sell_score = 0
 
+        # Ranging Consolidation & Low-Momentum Range Boundary Guard:
+        # Prevents buying into ceiling resistance or selling into floor support during choppy/non-trending regimes.
+        if regime == "RANGING_CONSOLIDATION" or adx_val < getattr(self, "adx_min", 20.0):
+            # In range: never buy above VWAP mean (only buy at oversold floor)
+            if close > vwap_val or z_score > 0.0:
+                buy_score = 0
+            # In range: never sell below VWAP mean (only sell at overbought ceiling)
+            if close < vwap_val or z_score < 0.0:
+                sell_score = 0
+
         # --- ML PROBABILISTIC & EXPECTED VALUE EVALUATION ---
         buy_features = {
             "core_setup_pts": max(sweep_pts_buy, pullback_buy, retest_buy, vwap_mr_buy),
