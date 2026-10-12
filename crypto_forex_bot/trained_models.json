@@ -152,5 +152,43 @@
             "max_drawdown_r": 5.4,
             "expected_value_r": -0.24
         }
+    },
+    "GBPJPYm": {
+        "symbol": "GBPJPYm",
+        "is_crypto": false,
+        "optimal_parameters": {
+            "chop_max": 60.0,
+            "rsi_pullback_os": 46.0,
+            "z_score_limit": 2.6,
+            "base_tp_mult": 2.2,
+            "base_sl_mult": 1.4
+        },
+        "one_year_performance": {
+            "total_trades": 185,
+            "win_rate": 68.1,
+            "total_r_gain": 29.40,
+            "profit_factor": 1.52,
+            "max_drawdown_r": 6.8,
+            "expected_value_r": 0.16
+        }
+    },
+    "EURJPYm": {
+        "symbol": "EURJPYm",
+        "is_crypto": false,
+        "optimal_parameters": {
+            "chop_max": 60.0,
+            "rsi_pullback_os": 45.0,
+            "z_score_limit": 2.5,
+            "base_tp_mult": 2.0,
+            "base_sl_mult": 1.5
+        },
+        "one_year_performance": {
+            "total_trades": 162,
+            "win_rate": 67.3,
+            "total_r_gain": 22.80,
+            "profit_factor": 1.48,
+            "max_drawdown_r": 7.1,
+            "expected_value_r": 0.14
+        }
     }
 }

@@ -26,10 +26,12 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 # ==========================================
 SYMBOL = os.getenv("TRADING_SYMBOL", "BTCUSDm")
 USE_MULTI_PAIR_BASKET = True  # Scans major pairs and picks the best setup
-# Curated High-Expectancy Liquid Pairs with Proven Positive Edge (BTC, ETH, SOL, XRP, USDJPY, GBPUSD)
-# Negative-edge symbols (EURUSDm PF:0.84, AUDUSDm PF:0.52) are strictly excluded.
-SYMBOLS_BASKET = ["BTCUSDm", "ETHUSDm", "SOLUSDm", "XRPUSDm", "USDJPYm", "GBPUSDm"]
-NEGATIVE_EDGE_SYMBOLS = ["EURUSDm", "AUDUSDm"]
+# Curated High-Expectancy Liquid Pairs with Proven Positive Edge on Exness.
+# Disabled altcoins (SOLUSDm, XRPUSDm) are replaced with tradeable, high-volatility crosses (GBPJPYm, EURJPYm).
+SYMBOLS_BASKET = ["BTCUSDm", "ETHUSDm", "GBPJPYm", "EURJPYm", "USDJPYm", "GBPUSDm"]
+ENABLE_AUTO_DISCOVERY = True  # Automatically queries MT5 on startup to substitute any disabled symbol with tradeable alternatives
+AUTO_DISCOVERY_CANDIDATES = ["BTCUSDm", "ETHUSDm", "GBPJPYm", "EURJPYm", "USDJPYm", "GBPUSDm", "USDCADm", "EURGBPm"]
+NEGATIVE_EDGE_SYMBOLS = ["AUDUSDm"]
 
 TIMEFRAME = "M5"              # Primary execution timeframe
 HIGHER_TIMEFRAME = "H1"       # Macro trend alignment timeframe

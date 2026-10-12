@@ -108,6 +108,27 @@ class ExnessTradingBot:
                     continue
                 self.basket_symbols.append(valid)
 
+        # Dynamic Auto-Discovery: If any configured symbols were disabled or missing,
+        # automatically discover and verify liquid alternatives from candidate pool
+        if getattr(config, "ENABLE_AUTO_DISCOVERY", True):
+            candidate_pool = getattr(config, "AUTO_DISCOVERY_CANDIDATES", [])
+            negative_edge = set(getattr(config, "NEGATIVE_EDGE_SYMBOLS", []))
+            target_basket_size = max(4, len(raw_symbols))
+
+            if len(self.basket_symbols) < target_basket_size:
+                for candidate in candidate_pool:
+                    if candidate in self.basket_symbols or candidate in negative_edge:
+                        continue
+                    valid_c = self.connector.verify_symbol(candidate)
+                    if valid_c:
+                        s_info = mt5.symbol_info(valid_c)
+                        if s_info and s_info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL:
+                            mt5.symbol_select(valid_c, True)
+                            self.basket_symbols.append(valid_c)
+                            self.log(f"Auto-Discovered tradeable symbol: {valid_c} (Mode: FULL)", "SUCCESS")
+                            if len(self.basket_symbols) >= target_basket_size:
+                                break
+
         if not self.basket_symbols:
             self.log("No valid symbols could be verified on Exness.", "ERROR")
             return False
