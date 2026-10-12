@@ -102,3 +102,29 @@
 > * **Adaptive Feedback Loop**: Enhanced post-loss cooldown: 2 completed M5 candles required before scanning this symbol again.
 
 ---
+
+### 📊 Trade #2041625799 | ETHUSDm SELL (2026-10-12 08:31:58 UTC)
+* **Outcome**: **🔴 STOP LOSS HIT** | **Realized PnL**: `-$0.45` (-456.0 pips)
+* **Exit Reason**: `Trailing Stop / SL Hit`
+* **Execution Parameters**:
+  * **Entry Price**: `2550.260`
+  * **Planned SL**: `2554.820` (Risk: $0.46)
+  * **Planned TP**: `2541.560` (Target: $0.87)
+  * **Actual Exit**: `2554.820`
+
+* **Decision Basis & Strategy Confluence**:
+  * **Core Setup**: `SMC Trend Confluence (A)` (Grade: `A`)
+  * **Choppiness Index**: `27.6` (Reference: `< 50` = Trending)
+  * **Trend Strength (ADX)**: `24.9`
+  * **Z-Score from VWAP**: `-1.30` (Exhaustion guard: `< 1.4`)
+  * **Volume Surge Ratio**: `1.12x` average
+  * **ML Win Probability $P(Win)$**: `60.0%` | **Expected Value $E[R]$**: `+0.20R`
+
+> [!WARNING]
+> #### 🧠 Stop Loss Post-Mortem & Mistake Diagnosis:
+> * **Failure Mode**: `LIQUIDITY_HUNT_SPIKE`
+> * **Root-Cause Analysis**: Market executed a secondary liquidity grab or spread spike that clipped the Stop Loss before reversing back into the intended direction.
+> * **Key Lesson Learned**: Slightly widen buffer or place stops beyond swing structure rather than arbitrary tight points.
+> * **Adaptive Feedback Loop**: Enhanced post-loss cooldown: 2 completed M5 candles required before scanning this symbol again.
+
+---

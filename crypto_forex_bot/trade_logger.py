@@ -90,9 +90,11 @@ def classify_sl_root_cause(symbol: str, signal: str, decision_basis: Dict[str, A
         lesson = "Slightly widen buffer or place stops beyond swing structure rather than arbitrary tight points."
         action = "Enhanced post-loss cooldown: 2 completed M5 candles required before scanning this symbol again."
 
-    # For Gold: Apply slight adaptive weight damping in gold_ml_weights.json if available
+    # Apply adaptive model adjustment to learn from the loss
     if is_gold:
         _apply_gold_ml_adaptive_penalty(category)
+    else:
+        _apply_crypto_adaptive_penalty(symbol, category)
 
     return {
         "category": category,
@@ -100,6 +102,35 @@ def classify_sl_root_cause(symbol: str, signal: str, decision_basis: Dict[str, A
         "lesson": lesson,
         "action": action
     }
+
+
+def _apply_crypto_adaptive_penalty(symbol: str, category: str):
+    """Dynamically adapts trained parameters for the specific coin/pair upon loss."""
+    models_path = os.path.join(CRYPTO_DIR, "trained_models.json")
+    if not os.path.exists(models_path):
+        return
+    try:
+        with open(models_path, "r") as f:
+            data = json.load(f)
+        if symbol in data and "optimal_parameters" in data[symbol]:
+            params = data[symbol]["optimal_parameters"]
+            if category == "LIQUIDITY_HUNT_SPIKE":
+                # Slightly widen SL buffer from 1.5 to 1.6 to prevent tight stop outs
+                params["base_sl_mult"] = round(min(2.0, params.get("base_sl_mult", 1.5) + 0.1), 2)
+            elif category == "EXHAUSTED_SPIKE_TRAP":
+                # Tighten Z-score limit so it stops chasing extended moves
+                params["z_score_limit"] = round(max(1.5, params.get("z_score_limit", 2.8) - 0.2), 2)
+            elif category == "CHOP_EXPANSION_TRAP":
+                # Tighten chop threshold so it demands cleaner trending markets
+                params["chop_max"] = round(max(48.0, params.get("chop_max", 61.8) - 2.0), 1)
+
+            data[symbol]["optimal_parameters"] = params
+            data[symbol]["last_adapted"] = datetime.now(timezone.utc).isoformat()
+            data[symbol]["last_adaptation_cause"] = category
+            with open(models_path, "w") as f:
+                json.dump(data, f, indent=4)
+    except Exception:
+        pass
 
 
 def _apply_gold_ml_adaptive_penalty(category: str):

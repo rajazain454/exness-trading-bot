@@ -26,7 +26,7 @@
             "rsi_pullback_os": 48.0,
             "z_score_limit": 2.8,
             "base_tp_mult": 2.0,
-            "base_sl_mult": 1.5
+            "base_sl_mult": 1.6
         },
         "one_year_performance": {
             "total_trades": 373,
@@ -35,7 +35,9 @@
             "profit_factor": 1.28,
             "max_drawdown_r": 9.75,
             "expected_value_r": 0.09
-        }
+        },
+        "last_adapted": "2026-10-12T08:36:21.127292+00:00",
+        "last_adaptation_cause": "LIQUIDITY_HUNT_SPIKE"
     },
     "SOLUSDm": {
         "symbol": "SOLUSDm",
