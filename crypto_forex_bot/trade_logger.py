@@ -186,6 +186,11 @@ def update_live_trade_files(
     Appends the finished trade to both the Daily Trading History and the
     Trade Decision & Learning Ledger in real-time.
     """
+    # Guard against unit tests and synthetic/mock tickets (e.g. ticket #12345)
+    # Real Exness tickets are 10-digit integers (> 1,000,000,000)
+    if ticket < 100000 or str(ticket).startswith("12345"):
+        return
+
     decision_basis = decision_basis or {}
     is_gold = bot_type.lower() == "gold" or "XAU" in symbol.upper()
     daily_file = GOLD_DAILY_FILE if is_gold else CRYPTO_DAILY_FILE

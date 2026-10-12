@@ -128,3 +128,26 @@
 > * **Adaptive Feedback Loop**: Enhanced post-loss cooldown: 2 completed M5 candles required before scanning this symbol again.
 
 ---
+
+### 📊 Trade #2043937940 | BTCUSDm BUY (2026-10-12 14:10:57 UTC)
+* **Outcome**: **🟢 PROFIT HIT** | **Realized PnL**: `+$1.29` (+12837.0 pips)
+* **Exit Reason**: `Trailing Stop / SL Hit`
+* **Execution Parameters**:
+  * **Entry Price**: `82866.410`
+  * **Planned SL**: `82994.780` (Risk: $1.28)
+  * **Planned TP**: `83414.300` (Target: $5.48)
+  * **Actual Exit**: `82994.780`
+
+* **Decision Basis & Strategy Confluence**:
+  * **Core Setup**: `SMC Trend Confluence (A)` (Grade: `A`)
+  * **Choppiness Index**: `49.0` (Reference: `< 50` = Trending)
+  * **Trend Strength (ADX)**: `43.6`
+  * **Z-Score from VWAP**: `-0.60` (Exhaustion guard: `< 1.4`)
+  * **Volume Surge Ratio**: `0.88x` average
+  * **ML Win Probability $P(Win)$**: `60.0%` | **Expected Value $E[R]$**: `+0.20R`
+
+> [!TIP]
+> #### ✅ Successful Execution Takeaway:
+> Setup respected structure. Profit banked within target parameters. Cooldown active for 1 M5 candle before re-scanning.
+
+---
