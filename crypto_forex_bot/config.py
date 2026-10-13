@@ -50,7 +50,7 @@ KELLY_FRACTION = 0.25         # Quarter-Kelly for maximum safety on $30 capital
 # 2. Z-Score Statistical Pullback Filter
 Z_SCORE_FILTER_ENABLED = True
 Z_SCORE_PULLBACK_THRESHOLD = 0.8  # Must be >= 0.8 std dev stretched for discount entry
-Z_SCORE_PULLBACK_MAX = 2.8        # Blow-off top shield (protects against 3-sigma extremes)
+Z_SCORE_PULLBACK_MAX = 1.40       # Exhaustion shield: block entries when |Z| > 1.40 (prevents buying/selling at extremes)
 
 # 3. Fractal Choppiness Index (CHOP)
 CHOP_FILTER_ENABLED = True
@@ -129,9 +129,12 @@ MIDDAY_LULL_FILTER_ENABLED = True      # Pause Forex between 11:30 and 13:00 UTC
 # RISK MANAGEMENT & AUTO-COMPOUNDING
 # ==========================================
 BASE_LOT_SIZE = 0.01
-ENABLE_TWO_TIER_SCALING = True        # Automatically scale lot size to 0.02 once equity >= $75
-TWO_TIER_EQUITY_THRESHOLD = 75.0      # $75 - $80 milestone
+ENABLE_TWO_TIER_SCALING = True        # Automatically scale lot size to 0.02 once equity threshold reached
+TWO_TIER_EQUITY_THRESHOLD = 75.0      # Forex scales to 0.02 lot at $75+
+CRYPTO_TWO_TIER_EQUITY_THRESHOLD = 150.0 # Crypto stays strictly at 0.01 lot until $150 (protects against tight SL on BTC)
 SCALED_LOT_SIZE = 0.02                # 0.02 lot enables 50% TP1 partial close (0.01) + runner (0.01)
+DISABLE_CRYPTO_EXPANSION_CHASE = True # Restricts Crypto to Setup 1 (Value Pullback) and Setup 2 (FVG Retest)
+MIN_BTC_SL_USD = 250.0                # Minimum $250 price distance floor on BTC (prevents micro-noise stopouts)
 MAX_OPEN_POSITIONS = 2               # 2 positions max across account (1 Crypto + 1 Forex lane)
 MAX_CRYPTO_POSITIONS = 1             # Dedicated lane: 1 Crypto position (BTC/ETH/SOL/XRP)
 MAX_FOREX_POSITIONS = 1              # Dedicated lane: 1 Forex position (EUR/GBP/JPY)

@@ -285,10 +285,14 @@ class RiskManager:
         # On accounts with $75 - $150 equity, scale lot size to exactly 0.02 lots
         # to ensure optimal risk while unlocking dual-tier Partial TP (0.01 TP1 + 0.01 runner).
         if getattr(config, "ENABLE_TWO_TIER_SCALING", True):
-            threshold = getattr(config, "TWO_TIER_EQUITY_THRESHOLD", 75.0)
-            if equity < threshold:
+            is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"]) if symbol else False
+            crypto_threshold = getattr(config, "CRYPTO_TWO_TIER_EQUITY_THRESHOLD", 150.0)
+            forex_threshold = getattr(config, "TWO_TIER_EQUITY_THRESHOLD", 75.0)
+            target_threshold = crypto_threshold if is_crypto else forex_threshold
+
+            if equity < target_threshold:
                 lot = getattr(config, "BASE_LOT_SIZE", 0.01)
-            elif threshold <= equity < 150.0:
+            elif target_threshold <= equity < 250.0:
                 lot = getattr(config, "SCALED_LOT_SIZE", 0.02)
 
         # Equity Curve Throttle: reduce risk by 50% strictly during consecutive live losses
@@ -474,12 +478,13 @@ class RiskManager:
         is_crypto = any(c in symbol for c in ["BTC", "ETH", "SOL", "XRP"])
 
         if is_crypto:
-            # For Crypto, calculate SL/TP directly from ATR price units or minimum spread clearance
+            # For Crypto, calculate SL/TP directly from ATR price units with a healthy floor
             spread_dist = tick.ask - tick.bid
+            min_crypto_floor = getattr(config, "MIN_BTC_SL_USD", 250.0) if "BTC" in symbol.upper() else max(15.0, spread_dist * 4.0)
             if config.USE_DYNAMIC_ATR_SLTP and atr_value > 0:
-                sl_dist = max(atr_value * sl_mult, spread_dist * 3.0)
+                sl_dist = max(atr_value * sl_mult * 1.5, min_crypto_floor, spread_dist * 3.0)
             else:
-                sl_dist = max(150.0, spread_dist * 3.0)
+                sl_dist = max(min_crypto_floor, spread_dist * 3.0)
             tp_dist = sl_dist * (tp_mult / sl_mult)
             sl_pips = round(sl_dist / pip_size, 1)
             tp_pips = round(tp_dist / pip_size, 1)

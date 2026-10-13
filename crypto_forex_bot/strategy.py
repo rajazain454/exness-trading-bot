@@ -262,11 +262,13 @@ class ForexConfluenceStrategy:
         }
 
         # Load 1-year trained optimal parameters for this coin/pair if available
+        is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
         trained_p = get_trained_params(symbol)
         chop_max_limit = trained_p.get("chop_max", config.MAX_CHOPPINESS_INDEX)
         rsi_os = trained_p.get("rsi_pullback_os", 48.0)
         rsi_ob = 100.0 - rsi_os
-        z_limit = trained_p.get("z_score_limit", config.Z_SCORE_PULLBACK_MAX)
+        base_z_cap = 1.40 if is_crypto else config.Z_SCORE_PULLBACK_MAX
+        z_limit = min(trained_p.get("z_score_limit", base_z_cap), base_z_cap)
 
         # Market Regime Classification
         regime_info = MarketRegimeDetector.classify_regime(adx_val, chop_val, atr_percentile, z_score_val)
@@ -318,15 +320,17 @@ class ForexConfluenceStrategy:
             if fvg_rejection and fvg_trend_aligned and (close >= open_price) and live_holding_buy:
                 buy_setup = "SETUP_2_FVG_MITIGATION"
 
-        # Setup 3: Institutional Momentum Expansion / Breakout (with breakout volume confirmation)
-        lookback_slice = df_m5["high"].iloc[-7:-2] if require_closed and len(df_m5) >= 8 else df_m5["high"].iloc[-6:-1]
-        prior_5_high = max(lookback_slice) if len(lookback_slice) > 0 else high
-        micro_bos = close > prior_5_high
-        is_expansion_candle = (candle_range >= 0.95 * atr_val) and ((close - open_price) >= 0.40 * candle_range)
-        momentum_aligned = (adx_val >= 20.0) and (rsi_curr >= 52.0) and (close > ema_fast_val > ema_slow_val) and (vol_ratio >= 1.0)
-        live_holding_expansion = (live_close >= open_price) if require_closed else True
-        if not buy_setup and micro_bos and is_expansion_candle and momentum_aligned and live_holding_expansion:
-            buy_setup = "SETUP_3_MOMENTUM_EXPANSION"
+        # Setup 3: Institutional Momentum Expansion / Breakout (Forex only - disabled on Crypto to prevent exhaustion traps)
+        allow_expansion = not is_crypto if getattr(config, "DISABLE_CRYPTO_EXPANSION_CHASE", True) else True
+        if not buy_setup and allow_expansion:
+            lookback_slice = df_m5["high"].iloc[-7:-2] if require_closed and len(df_m5) >= 8 else df_m5["high"].iloc[-6:-1]
+            prior_5_high = max(lookback_slice) if len(lookback_slice) > 0 else high
+            micro_bos = close > prior_5_high
+            is_expansion_candle = (candle_range >= 0.95 * atr_val) and ((close - open_price) >= 0.40 * candle_range)
+            momentum_aligned = (adx_val >= 20.0) and (rsi_curr >= 52.0) and (close > ema_fast_val > ema_slow_val) and (vol_ratio >= 1.0)
+            live_holding_expansion = (live_close >= open_price) if require_closed else True
+            if micro_bos and is_expansion_candle and momentum_aligned and live_holding_expansion:
+                buy_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
         is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
         min_vol_floor = getattr(config, "MIN_VOLUME_SURGE_RATIO", 0.70)
@@ -402,15 +406,16 @@ class ForexConfluenceStrategy:
             if fvg_rejection_sell and fvg_trend_aligned_sell and (close <= open_price) and live_holding_sell:
                 sell_setup = "SETUP_2_FVG_MITIGATION"
 
-        # Setup 3: Institutional Momentum Expansion / Breakdown (with breakout volume confirmation)
-        lookback_slice_sell = df_m5["low"].iloc[-7:-2] if require_closed and len(df_m5) >= 8 else df_m5["low"].iloc[-6:-1]
-        prior_5_low = min(lookback_slice_sell) if len(lookback_slice_sell) > 0 else low
-        micro_bos_sell = close < prior_5_low
-        is_expansion_candle_sell = (candle_range >= 0.95 * atr_val) and ((open_price - close) >= 0.40 * candle_range)
-        momentum_aligned_sell = (adx_val >= 20.0) and (rsi_curr <= 48.0) and (close < ema_fast_val < ema_slow_val) and (vol_ratio >= 1.0)
-        live_holding_expansion_sell = (live_close <= open_price) if require_closed else True
-        if not sell_setup and micro_bos_sell and is_expansion_candle_sell and momentum_aligned_sell and live_holding_expansion_sell:
-            sell_setup = "SETUP_3_MOMENTUM_EXPANSION"
+        # Setup 3: Institutional Momentum Expansion / Breakdown (Forex only - disabled on Crypto to prevent exhaustion traps)
+        if not sell_setup and allow_expansion:
+            lookback_slice_sell = df_m5["low"].iloc[-7:-2] if require_closed and len(df_m5) >= 8 else df_m5["low"].iloc[-6:-1]
+            prior_5_low = min(lookback_slice_sell) if len(lookback_slice_sell) > 0 else low
+            micro_bos_sell = close < prior_5_low
+            is_expansion_candle_sell = (candle_range >= 0.95 * atr_val) and ((open_price - close) >= 0.40 * candle_range)
+            momentum_aligned_sell = (adx_val >= 20.0) and (rsi_curr <= 48.0) and (close < ema_fast_val < ema_slow_val) and (vol_ratio >= 1.0)
+            live_holding_expansion_sell = (live_close <= open_price) if require_closed else True
+            if micro_bos_sell and is_expansion_candle_sell and momentum_aligned_sell and live_holding_expansion_sell:
+                sell_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
         sell_candidate: Optional[Dict[str, Any]] = None
         sell_suppress_reason: Optional[str] = None
