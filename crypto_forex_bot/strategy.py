@@ -306,71 +306,58 @@ class ForexConfluenceStrategy:
             if micro_bos and is_expansion_candle and momentum_aligned:
                 buy_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
+        is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+        min_vol_floor = getattr(config, "MIN_VOLUME_SURGE_RATIO", 0.70)
+
+        # -------------------------------------------------------------
+        # BUY CONFLUENCE VALIDATION
+        # -------------------------------------------------------------
+        buy_candidate = None
+        buy_suppress_reason = None
         if buy_setup:
-            # 0. Market Regime Guard
             if buy_setup not in allowed_setups:
-                return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed by Market Regime ({regime_info['regime']}): {regime_info['description']}.", "metrics": metrics, "score": 0}
-
-            # 1. Higher Timeframe Guard
-            if h1_trend == "BEARISH":
-                return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: H1 macro trend is BEARISH.", "metrics": metrics, "score": 0}
-
-            # 2. ADX Trend Strength Guard: strictly enforce across ALL setups
-            if config.ADX_FILTER_ENABLED and not has_trend_strength:
-                return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: ADX ({adx_val:.1f} < {config.MIN_ADX_THRESHOLD}). Market lacks directional momentum.", "metrics": metrics, "score": 0}
-
-            # 2b. Falling Knife Guard: Block BUY if previous 2 candles were consecutive dumps without absorption wick
-            if prev_candle["close"] < prev_candle["open"] and prev_2_candle["close"] < prev_2_candle["open"]:
-                if lower_wick_ratio < 0.20 and close <= prev_candle["high"]:
-                    return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: Falling knife momentum bleed (2 consecutive red candles without absorption wick).", "metrics": metrics, "score": 0}
-
-            # 3. Volume Floor Guard
-            min_vol_floor = getattr(config, "MIN_VOLUME_SURGE_RATIO", 0.70)
-            if config.PRICE_ACTION_FILTER_ENABLED and vol_ratio < min_vol_floor:
-                return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: Low tick volume ({vol_ratio:.2f}x < {min_vol_floor:.2f}x).", "metrics": metrics, "score": 0}
-
-            # 4. Currency Strength Meter Guard (Forex only)
-            if csm_engine and config.CSM_FILTER_ENABLED:
-                csm_ok, csm_reason = csm_engine.is_aligned_with_signal(symbol, "BUY")
-                if not csm_ok:
-                    return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: {csm_reason}", "metrics": metrics, "score": 0}
-
-            # 5. SMC Resistance Wall Guard
-            if smc_engine and config.SMC_FILTER_ENABLED:
-                smc_ok, smc_reason = smc_engine.check_structure_trap(symbol, "BUY", close)
-                if not smc_ok:
-                    return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: {smc_reason}", "metrics": metrics, "score": 0}
-
-            # Quantitative Score Accumulation
-            score = 65
-            if buy_setup == "SETUP_1_PULLBACK": score += 5
-            elif buy_setup == "SETUP_2_FVG_MITIGATION": score += 10
-            elif buy_setup == "SETUP_3_MOMENTUM_EXPANSION": score += 10
-
-            if h1_trend == "BULLISH": score += 10
-            if adx_val >= 25.0: score += 5
-            if chop_val <= 45.0: score += 10
-            if z_score_val <= -0.2: score += 5
-            if close <= (vwap_val * 1.0005): score += 5
-            if fvg_type == "BULLISH_FVG": score += 5
-            if vol_ratio >= 1.1: score += 5
-
-            is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
-            if is_crypto:
-                if vol_ratio >= 1.4: score += 5
-                if candle_range >= (atr_val * 1.0): score += 5
+                buy_suppress_reason = f"M5 Buy [{buy_setup}] suppressed by Market Regime ({regime_info['regime']}): {regime_info['description']}."
+            elif h1_trend == "BEARISH":
+                buy_suppress_reason = f"M5 Buy [{buy_setup}] suppressed: H1 macro trend is BEARISH."
+            elif config.ADX_FILTER_ENABLED and not has_trend_strength:
+                buy_suppress_reason = f"M5 Buy [{buy_setup}] suppressed: ADX ({adx_val:.1f} < {config.MIN_ADX_THRESHOLD}). Market lacks directional momentum."
+            elif prev_candle["close"] < prev_candle["open"] and prev_2_candle["close"] < prev_2_candle["open"] and lower_wick_ratio < 0.20 and close <= prev_candle["high"]:
+                buy_suppress_reason = f"M5 Buy [{buy_setup}] suppressed: Falling knife momentum bleed (2 consecutive red candles without absorption wick)."
+            elif config.PRICE_ACTION_FILTER_ENABLED and vol_ratio < min_vol_floor:
+                buy_suppress_reason = f"M5 Buy [{buy_setup}] suppressed: Low tick volume ({vol_ratio:.2f}x < {min_vol_floor:.2f}x)."
+            elif csm_engine and config.CSM_FILTER_ENABLED and not is_crypto and not csm_engine.is_aligned_with_signal(symbol, "BUY")[0]:
+                buy_suppress_reason = f"M5 Buy [{buy_setup}] suppressed: {csm_engine.is_aligned_with_signal(symbol, 'BUY')[1]}"
+            elif smc_engine and config.SMC_FILTER_ENABLED and not smc_engine.check_structure_trap(symbol, "BUY", close)[0]:
+                buy_suppress_reason = f"M5 Buy [{buy_setup}] suppressed: {smc_engine.check_structure_trap(symbol, 'BUY', close)[1]}"
             else:
-                if csm_engine and config.CSM_FILTER_ENABLED:
-                    diff, _, _ = csm_engine.get_currency_differential(symbol)
-                    if diff >= config.MIN_CSM_DIFFERENTIAL: score += 5
-                    if diff >= (config.MIN_CSM_DIFFERENTIAL * 2.0): score += 5
+                score = 65
+                if buy_setup == "SETUP_1_PULLBACK": score += 5
+                elif buy_setup == "SETUP_2_FVG_MITIGATION": score += 10
+                elif buy_setup == "SETUP_3_MOMENTUM_EXPANSION": score += 10
 
-            return {
-                "signal": "BUY",
-                "reason": f"Quant Confluence [{buy_setup}]: H1={h1_trend}, M5 Bullish, CHOP={chop_val:.1f}, Z={z_score_val:+.2f}, Vol={vol_ratio:.2f}x",
-                "metrics": metrics,
-                "score": min(score, 100)
-            }
+                if h1_trend == "BULLISH": score += 10
+                if adx_val >= 25.0: score += 5
+                if chop_val <= 45.0: score += 10
+                if z_score_val <= -0.2: score += 5
+                if close <= (vwap_val * 1.0005): score += 5
+                if fvg_type == "BULLISH_FVG": score += 5
+                if vol_ratio >= 1.1: score += 5
+
+                if is_crypto:
+                    if vol_ratio >= 1.4: score += 5
+                    if candle_range >= (atr_val * 1.0): score += 5
+                else:
+                    if csm_engine and config.CSM_FILTER_ENABLED:
+                        diff, _, _ = csm_engine.get_currency_differential(symbol)
+                        if diff >= config.MIN_CSM_DIFFERENTIAL: score += 5
+                        if diff >= (config.MIN_CSM_DIFFERENTIAL * 2.0): score += 5
+
+                buy_candidate = {
+                    "signal": "BUY",
+                    "reason": f"Quant Confluence [{buy_setup}]: H1={h1_trend}, M5 Bullish, CHOP={chop_val:.1f}, Z={z_score_val:+.2f}, Vol={vol_ratio:.2f}x",
+                    "metrics": metrics,
+                    "score": min(score, 100)
+                }
 
         # -------------------------------------------------------------
         # SELL CONFLUENCE EVALUATION (MULTI-STRATEGY CONFLUENCE)
@@ -401,75 +388,67 @@ class ForexConfluenceStrategy:
             if micro_bos_sell and is_expansion_candle_sell and momentum_aligned_sell:
                 sell_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
+        sell_candidate = None
+        sell_suppress_reason = None
         if sell_setup:
-            # 0. Market Regime Guard
             if sell_setup not in allowed_setups:
-                return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed by Market Regime ({regime_info['regime']}): {regime_info['description']}.", "metrics": metrics, "score": 0}
-
-            # 1. Higher Timeframe Guard
-            if h1_trend == "BULLISH":
-                return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: H1 macro trend is BULLISH.", "metrics": metrics, "score": 0}
-
-            # 2. ADX Trend Strength Guard: strictly enforce across ALL setups
-            if config.ADX_FILTER_ENABLED and not has_trend_strength:
-                return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: ADX ({adx_val:.1f} < {config.MIN_ADX_THRESHOLD}). Market lacks directional momentum.", "metrics": metrics, "score": 0}
-
-            # 2b. Rising Pump Trap Guard: Block SELL if previous 2 candles were consecutive pumps without rejection wick
-            if prev_candle["close"] > prev_candle["open"] and prev_2_candle["close"] > prev_2_candle["open"]:
-                if upper_wick_ratio < 0.20 and close >= prev_candle["low"]:
-                    return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: Rising pump momentum (2 consecutive green candles without rejection wick).", "metrics": metrics, "score": 0}
-
-            # 3. Volume Floor Guard
-            min_vol_floor = getattr(config, "MIN_VOLUME_SURGE_RATIO", 0.70)
-            if config.PRICE_ACTION_FILTER_ENABLED and vol_ratio < min_vol_floor:
-                return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: Low tick volume ({vol_ratio:.2f}x < {min_vol_floor:.2f}x).", "metrics": metrics, "score": 0}
-
-            # 4. Currency Strength Meter Guard (Forex only)
-            if csm_engine and config.CSM_FILTER_ENABLED:
-                csm_ok, csm_reason = csm_engine.is_aligned_with_signal(symbol, "SELL")
-                if not csm_ok:
-                    return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: {csm_reason}", "metrics": metrics, "score": 0}
-
-            # 5. SMC Support Wall Guard
-            if smc_engine and config.SMC_FILTER_ENABLED:
-                smc_ok, smc_reason = smc_engine.check_structure_trap(symbol, "SELL", close)
-                if not smc_ok:
-                    return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: {smc_reason}", "metrics": metrics, "score": 0}
-
-            # Quantitative Score Accumulation
-            score = 65
-            if sell_setup == "SETUP_1_PULLBACK": score += 5
-            elif sell_setup == "SETUP_2_FVG_MITIGATION": score += 10
-            elif sell_setup == "SETUP_3_MOMENTUM_EXPANSION": score += 10
-
-            if h1_trend == "BEARISH": score += 10
-            if adx_val >= 25.0: score += 5
-            if chop_val <= 45.0: score += 10
-            if z_score_val >= 0.2: score += 5
-            if close >= (vwap_val * 0.9995): score += 5
-            if fvg_type == "BEARISH_FVG": score += 5
-            if vol_ratio >= 1.1: score += 5
-
-            is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
-            if is_crypto:
-                if vol_ratio >= 1.4: score += 5
-                if candle_range >= (atr_val * 1.0): score += 5
+                sell_suppress_reason = f"M5 Sell [{sell_setup}] suppressed by Market Regime ({regime_info['regime']}): {regime_info['description']}."
+            elif h1_trend == "BULLISH":
+                sell_suppress_reason = f"M5 Sell [{sell_setup}] suppressed: H1 macro trend is BULLISH."
+            elif config.ADX_FILTER_ENABLED and not has_trend_strength:
+                sell_suppress_reason = f"M5 Sell [{sell_setup}] suppressed: ADX ({adx_val:.1f} < {config.MIN_ADX_THRESHOLD}). Market lacks directional momentum."
+            elif prev_candle["close"] > prev_candle["open"] and prev_2_candle["close"] > prev_2_candle["open"] and upper_wick_ratio < 0.20 and close >= prev_candle["low"]:
+                sell_suppress_reason = f"M5 Sell [{sell_setup}] suppressed: Rising pump momentum (2 consecutive green candles without rejection wick)."
+            elif config.PRICE_ACTION_FILTER_ENABLED and vol_ratio < min_vol_floor:
+                sell_suppress_reason = f"M5 Sell [{sell_setup}] suppressed: Low tick volume ({vol_ratio:.2f}x < {min_vol_floor:.2f}x)."
+            elif csm_engine and config.CSM_FILTER_ENABLED and not is_crypto and not csm_engine.is_aligned_with_signal(symbol, "SELL")[0]:
+                sell_suppress_reason = f"M5 Sell [{sell_setup}] suppressed: {csm_engine.is_aligned_with_signal(symbol, 'SELL')[1]}"
+            elif smc_engine and config.SMC_FILTER_ENABLED and not smc_engine.check_structure_trap(symbol, "SELL", close)[0]:
+                sell_suppress_reason = f"M5 Sell [{sell_setup}] suppressed: {smc_engine.check_structure_trap(symbol, 'SELL', close)[1]}"
             else:
-                if csm_engine and config.CSM_FILTER_ENABLED:
-                    diff, _, _ = csm_engine.get_currency_differential(symbol)
-                    if diff <= -config.MIN_CSM_DIFFERENTIAL: score += 5
-                    if diff <= -(config.MIN_CSM_DIFFERENTIAL * 2.0): score += 5
+                score = 65
+                if sell_setup == "SETUP_1_PULLBACK": score += 5
+                elif sell_setup == "SETUP_2_FVG_MITIGATION": score += 10
+                elif sell_setup == "SETUP_3_MOMENTUM_EXPANSION": score += 10
 
+                if h1_trend == "BEARISH": score += 10
+                if adx_val >= 25.0: score += 5
+                if chop_val <= 45.0: score += 10
+                if z_score_val >= 0.2: score += 5
+                if close >= (vwap_val * 0.9995): score += 5
+                if fvg_type == "BEARISH_FVG": score += 5
+                if vol_ratio >= 1.1: score += 5
+
+                if is_crypto:
+                    if vol_ratio >= 1.4: score += 5
+                    if candle_range >= (atr_val * 1.0): score += 5
+                else:
+                    if csm_engine and config.CSM_FILTER_ENABLED:
+                        diff, _, _ = csm_engine.get_currency_differential(symbol)
+                        if diff <= -config.MIN_CSM_DIFFERENTIAL: score += 5
+                        if diff <= -(config.MIN_CSM_DIFFERENTIAL * 2.0): score += 5
+
+                sell_candidate = {
+                    "signal": "SELL",
+                    "reason": f"Quant Confluence [{sell_setup}]: H1={h1_trend}, M5 Bearish, CHOP={chop_val:.1f}, Z={z_score_val:+.2f}, Vol={vol_ratio:.2f}x",
+                    "metrics": metrics,
+                    "score": min(score, 100)
+                }
+
+        # -------------------------------------------------------------
+        # FINAL SIGNAL ARBITRATION (SYMMETRIC DUAL-DIRECTION)
+        # -------------------------------------------------------------
+        if buy_candidate and not sell_candidate:
+            return buy_candidate
+        elif sell_candidate and not buy_candidate:
+            return sell_candidate
+        elif buy_candidate and sell_candidate:
+            return buy_candidate if buy_candidate["score"] >= sell_candidate["score"] else sell_candidate
+        else:
+            default_reason = buy_suppress_reason or sell_suppress_reason or f"Scanning market. M5={metrics['m5_trend']} | H1={h1_trend} | CHOP={chop_val:.1f} | Z={z_score_val:+.2f}"
             return {
-                "signal": "SELL",
-                "reason": f"Quant Confluence [{sell_setup}]: H1={h1_trend}, M5 Bearish, CHOP={chop_val:.1f}, Z={z_score_val:+.2f}, Vol={vol_ratio:.2f}x",
+                "signal": "HOLD",
+                "reason": default_reason,
                 "metrics": metrics,
-                "score": min(score, 100)
+                "score": 0
             }
-
-        return {
-            "signal": "HOLD",
-            "reason": f"Scanning market. M5={metrics['m5_trend']} | H1={h1_trend} | CHOP={chop_val:.1f} | Z={z_score_val:+.2f}",
-            "metrics": metrics,
-            "score": 0
-        }
