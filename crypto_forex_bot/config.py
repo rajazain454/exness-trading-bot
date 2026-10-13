@@ -53,8 +53,8 @@ Z_SCORE_PULLBACK_MAX = 2.8        # Blow-off top shield (protects against 3-sigm
 
 # 3. Fractal Choppiness Index (CHOP)
 CHOP_FILTER_ENABLED = True
-MAX_CHOPPINESS_INDEX = 61.8   # Block entries when CHOP > 61.8 (random walk consolidation)
-CHOP_MAX_THRESHOLD = 61.8
+MAX_CHOPPINESS_INDEX = 52.0   # Block entries when CHOP > 52.0 (eliminates choppy random-walk entries)
+CHOP_MAX_THRESHOLD = 52.0
 
 # 4. Intraday VWAP Anchor
 VWAP_FILTER_ENABLED = True

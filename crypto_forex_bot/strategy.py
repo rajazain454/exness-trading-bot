@@ -292,8 +292,9 @@ class ForexConfluenceStrategy:
 
         # Setup 2: SMC Fair Value Gap (FVG) Mitigation
         if not buy_setup and has_fvg and fvg_type == "BULLISH_FVG":
-            fvg_rejection = (lower_wick_ratio >= 0.15) or (low <= prev_candle["high"])
-            if fvg_rejection and close >= open_price and close >= (ema_slow_val * 0.999):
+            fvg_rejection = (lower_wick_ratio >= 0.20) or (close > prev_candle["high"])
+            fvg_trend_aligned = (ema_fast_val >= ema_slow_val) and (close >= ema_fast_val * 0.999)
+            if fvg_rejection and fvg_trend_aligned and (close >= open_price):
                 buy_setup = "SETUP_2_FVG_MITIGATION"
 
         # Setup 3: Institutional Momentum Expansion / Breakout (with breakout volume confirmation)
@@ -314,9 +315,14 @@ class ForexConfluenceStrategy:
             if h1_trend == "BEARISH":
                 return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: H1 macro trend is BEARISH.", "metrics": metrics, "score": 0}
 
-            # 2. ADX Chop Guard (strict only on breakout expansion)
-            if buy_setup == "SETUP_3_MOMENTUM_EXPANSION" and not has_trend_strength:
-                return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: ADX ({adx_val:.1f} < {config.MIN_ADX_THRESHOLD}).", "metrics": metrics, "score": 0}
+            # 2. ADX Trend Strength Guard: strictly enforce across ALL setups
+            if config.ADX_FILTER_ENABLED and not has_trend_strength:
+                return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: ADX ({adx_val:.1f} < {config.MIN_ADX_THRESHOLD}). Market lacks directional momentum.", "metrics": metrics, "score": 0}
+
+            # 2b. Falling Knife Guard: Block BUY if previous 2 candles were consecutive dumps without absorption wick
+            if prev_candle["close"] < prev_candle["open"] and prev_2_candle["close"] < prev_2_candle["open"]:
+                if lower_wick_ratio < 0.20 and close <= prev_candle["high"]:
+                    return {"signal": "HOLD", "reason": f"M5 Buy [{buy_setup}] suppressed: Falling knife momentum bleed (2 consecutive red candles without absorption wick).", "metrics": metrics, "score": 0}
 
             # 3. Volume Floor Guard
             min_vol_floor = getattr(config, "MIN_VOLUME_SURGE_RATIO", 0.70)
@@ -381,8 +387,9 @@ class ForexConfluenceStrategy:
 
         # Setup 2: SMC Fair Value Gap (FVG) Mitigation
         if not sell_setup and has_fvg and fvg_type == "BEARISH_FVG":
-            fvg_rejection_sell = (upper_wick_ratio >= 0.15) or (high >= prev_candle["low"])
-            if fvg_rejection_sell and close <= open_price and close <= (ema_slow_val * 1.001):
+            fvg_rejection_sell = (upper_wick_ratio >= 0.20) or (close < prev_candle["low"])
+            fvg_trend_aligned_sell = (ema_fast_val <= ema_slow_val) and (close <= ema_fast_val * 1.001)
+            if fvg_rejection_sell and fvg_trend_aligned_sell and (close <= open_price):
                 sell_setup = "SETUP_2_FVG_MITIGATION"
 
         # Setup 3: Institutional Momentum Expansion / Breakdown (with breakout volume confirmation)
@@ -403,9 +410,14 @@ class ForexConfluenceStrategy:
             if h1_trend == "BULLISH":
                 return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: H1 macro trend is BULLISH.", "metrics": metrics, "score": 0}
 
-            # 2. ADX Chop Guard (strict only on breakdown expansion)
-            if sell_setup == "SETUP_3_MOMENTUM_EXPANSION" and not has_trend_strength:
-                return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: ADX ({adx_val:.1f} < {config.MIN_ADX_THRESHOLD}).", "metrics": metrics, "score": 0}
+            # 2. ADX Trend Strength Guard: strictly enforce across ALL setups
+            if config.ADX_FILTER_ENABLED and not has_trend_strength:
+                return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: ADX ({adx_val:.1f} < {config.MIN_ADX_THRESHOLD}). Market lacks directional momentum.", "metrics": metrics, "score": 0}
+
+            # 2b. Rising Pump Trap Guard: Block SELL if previous 2 candles were consecutive pumps without rejection wick
+            if prev_candle["close"] > prev_candle["open"] and prev_2_candle["close"] > prev_2_candle["open"]:
+                if upper_wick_ratio < 0.20 and close >= prev_candle["low"]:
+                    return {"signal": "HOLD", "reason": f"M5 Sell [{sell_setup}] suppressed: Rising pump momentum (2 consecutive green candles without rejection wick).", "metrics": metrics, "score": 0}
 
             # 3. Volume Floor Guard
             min_vol_floor = getattr(config, "MIN_VOLUME_SURGE_RATIO", 0.70)
