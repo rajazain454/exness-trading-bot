@@ -78,7 +78,9 @@ CONSECUTIVE_LOSS_COOLDOWN_BARS = 6 # 6 M5 bars (30 min) cooling period after cir
 
 # Dynamic ATR Stop Loss & Take Profit for Gold
 ATR_PERIOD = 14
-ATR_SL_MULTIPLIER = 1.15     # Tightened Stop Loss = 1.15 x ATR (caps loss to ~$2.50 on 0.01 lot)
+ATR_SL_MULTIPLIER = 1.15     # Tightened Stop Loss = 1.15 x ATR
+MAX_SL_DOLLARS = 2.50        # Hard ceiling on Stop Loss: Max loss on 0.01 lot is strictly -$2.50
+MAX_ALLOWED_ATR_USD = 3.50   # Volatility Shield: Disallow Gold scalping if M5 ATR exceeds $3.50 (e.g. news/NY open)
 ATR_TP_MULTIPLIER = 1.8      # Baseline dynamic Take Profit multiplier (1.8x ATR -> $3.00 - $3.50 target)
 MAX_TP_DOLLARS = 3.50        # Hard cap on Take Profit: max $3.00 - $3.50 profit on 0.01 lot ($3.50 price distance)
 MIN_TP_DOLLARS = 2.50        # Minimum TP floor ($2.50 price distance -> ensures positive R:R)

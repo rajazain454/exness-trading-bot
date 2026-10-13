@@ -265,14 +265,25 @@ class GoldOrderManager(BaseOrderManager):
             )
             return None
 
+        # Volatility Shield: Disallow scalping when ATR is wild (NY open / high impact spikes)
+        max_allowed_atr = getattr(config_gold, "MAX_ALLOWED_ATR_USD", 3.50)
+        if atr_val > max_allowed_atr:
+            logger.warning(
+                f"❌ Execution blocked: Current M5 Gold ATR (${atr_val:.2f}) exceeds maximum allowed (${max_allowed_atr:.2f}). Market in wild volatility expansion."
+            )
+            return None
+
         digits = info.digits
         entry = tick.ask if sig == "BUY" else tick.bid
-        stop_dist = atr_val * config_gold.ATR_SL_MULTIPLIER
+        
+        # Strict hard ceiling on Stop Loss: Max loss on Gold is strictly capped at MAX_SL_DOLLARS ($2.50)
+        max_sl_cap = getattr(config_gold, "MAX_SL_DOLLARS", 2.50)
+        stop_dist = round(min(max_sl_cap, atr_val * config_gold.ATR_SL_MULTIPLIER), digits)
 
         # Dynamic Scalp Take Profit with hard $3.00 - $3.50 cap
         raw_tp_dist = stop_dist * config_gold.ATR_TP_MULTIPLIER
         max_tp_cap = getattr(config_gold, "MAX_TP_DOLLARS", 3.50)
-        min_tp_floor = getattr(config_gold, "MIN_TP_DOLLARS", 2.00)
+        min_tp_floor = getattr(config_gold, "MIN_TP_DOLLARS", 2.50)
         tp_dist = round(min(max_tp_cap, max(min_tp_floor, raw_tp_dist)), digits)
 
         sl = round(entry - stop_dist if sig == "BUY" else entry + stop_dist, digits)
