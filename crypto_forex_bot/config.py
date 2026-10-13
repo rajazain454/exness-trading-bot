@@ -131,7 +131,11 @@ BASE_LOT_SIZE = 0.01
 ENABLE_TWO_TIER_SCALING = True        # Automatically scale lot size to 0.02 once equity >= $75
 TWO_TIER_EQUITY_THRESHOLD = 75.0      # $75 - $80 milestone
 SCALED_LOT_SIZE = 0.02                # 0.02 lot enables 50% TP1 partial close (0.01) + runner (0.01)
-MAX_OPEN_POSITIONS = 1               # Strictly 1 position across account for $30-$80 capital
+MAX_OPEN_POSITIONS = 2               # 2 positions max across account (1 Crypto + 1 Forex lane)
+MAX_CRYPTO_POSITIONS = 1             # Dedicated lane: 1 Crypto position (BTC/ETH/SOL/XRP)
+MAX_FOREX_POSITIONS = 1              # Dedicated lane: 1 Forex position (EUR/GBP/JPY)
+MAX_HOLD_MINUTES = 120               # 2-hour max hold time for stagnant M5 trades
+STAGNANT_EXIT_PIPS = 3.0             # Close trade if held > 2h and floating near entry (within 3 pips)
 
 ENABLE_COMPOUNDING = True
 CAPITAL_PER_001_LOT = 40.0

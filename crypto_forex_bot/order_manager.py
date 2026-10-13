@@ -269,6 +269,22 @@ class OrderManager(BaseOrderManager):
                 trail_step = config.TRAILING_STEP_PIPS * pip_size
                 partial_tp_dist = config.PARTIAL_TP_PIPS * pip_size
 
+            # Stagnant Momentum / Max-Hold Time Exit Guard
+            # If position has been held longer than MAX_HOLD_MINUTES (default 120m = 2 hours)
+            # and profit is stagnant (within STAGNANT_EXIT_PIPS of entry), exit cleanly to release slot and capital.
+            max_hold_mins = getattr(config, "MAX_HOLD_MINUTES", 120)
+            pos_time = getattr(pos, "time", 0)
+            if isinstance(pos_time, (int, float)) and pos_time > 0 and max_hold_mins > 0 and not pos_meta.get("partial_closed"):
+                elapsed_mins = (time.time() - float(pos_time)) / 60.0
+                if elapsed_mins >= max_hold_mins:
+                    cur_price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
+                    cur_diff = abs(cur_price - pos.price_open)
+                    stagnant_threshold = getattr(config, "STAGNANT_EXIT_PIPS", 3.0) * pip_size
+                    if cur_diff <= stagnant_threshold:
+                        logger.info(f"⏳ Time Exit: Position #{ticket} ({symbol}) held for {elapsed_mins:.0f}m with stagnant momentum. Auto-closing.")
+                        self.close_position(pos, reason="Stagnant Momentum / Time Exit")
+                        continue
+
             # BUY Position Management
             if pos.type == mt5.ORDER_TYPE_BUY:
                 current_profit_distance = tick.bid - pos.price_open

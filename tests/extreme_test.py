@@ -281,6 +281,7 @@ def test_risk_gatekeepers_and_peak_equity_breaker():
     from risk_manager import RiskManager
     from notifier import DiscordNotifier
     import config
+    import MetaTrader5 as mt5
 
     connector = MT5Connector()
     connector.initialize()
@@ -293,7 +294,9 @@ def test_risk_gatekeepers_and_peak_equity_breaker():
     # Mock connector account summary to show equity dropped to $32.00 (gave back $4 of $6 -> 66% giveback)
     orig_summary = connector.get_account_summary
     orig_session = risk.check_trading_session
+    orig_pos_get = mt5.positions_get
     risk.check_trading_session = lambda sym="": (True, "Session OK")
+    mt5.positions_get = lambda *a, **k: []
     connector.get_account_summary = lambda: {
         "login": 123456,
         "server": "Exness-Test",
@@ -315,6 +318,7 @@ def test_risk_gatekeepers_and_peak_equity_breaker():
     # Restore summary
     connector.get_account_summary = orig_summary
     risk.check_trading_session = orig_session
+    mt5.positions_get = orig_pos_get
 
     # 2. Test Non-blocking Async Discord Notifier
     notifier = DiscordNotifier()

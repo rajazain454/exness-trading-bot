@@ -326,8 +326,30 @@ class RiskManager:
         if symbol in negative_edge:
             return False, f"{symbol} is blacklisted due to negative mathematical edge in quant analysis."
 
-        if active_positions_count >= config.MAX_OPEN_POSITIONS:
-            return False, f"Maximum open position limit ({config.MAX_OPEN_POSITIONS}) reached."
+        # Overall portfolio position ceiling
+        max_total = getattr(config, "MAX_OPEN_POSITIONS", 2)
+        if active_positions_count >= max_total:
+            return False, f"Maximum open position limit ({max_total}) reached."
+
+        # Dedicated Asset Lane Enforcement (1 Crypto + 1 Forex)
+        # Prevents slow Forex consolidations from blocking 24/7 Crypto setups
+        try:
+            bot_magic = getattr(config, "MAGIC_NUMBER", 112233)
+            all_positions = mt5.positions_get() or []
+            bot_positions = [p for p in all_positions if getattr(p, "magic", 0) == bot_magic]
+            is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+            crypto_active = sum(1 for p in bot_positions if any(c in getattr(p, "symbol", "").upper() for c in ["BTC", "ETH", "SOL", "XRP"]))
+            forex_active = len(bot_positions) - crypto_active
+
+            max_crypto = getattr(config, "MAX_CRYPTO_POSITIONS", 1)
+            max_forex = getattr(config, "MAX_FOREX_POSITIONS", 1)
+
+            if is_crypto and crypto_active >= max_crypto:
+                return False, f"Crypto position slot full ({crypto_active}/{max_crypto})."
+            elif not is_crypto and forex_active >= max_forex:
+                return False, f"Forex position slot full ({forex_active}/{max_forex})."
+        except Exception:
+            pass
 
         # Verify broker allows trading on this specific symbol
         s_info = mt5.symbol_info(symbol) if symbol else None
