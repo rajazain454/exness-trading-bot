@@ -29,6 +29,7 @@ SYMBOL = "XAUUSDm"
 TIMEFRAME = "M5"             # Primary execution timeframe (M5 for clean institutional noise reduction)
 SCALP_TIMEFRAME = "M1"       # Ultra-fast micro-structure confirmation (M1)
 HIGHER_TIMEFRAME = "H1"      # Macro trend filter (H1)
+REQUIRE_CLOSED_CANDLE_CONFIRMATION = True # Require fully closed M5 candle confirmation (No mid-candle jumping)
 
 # Moving Averages
 EMA_FAST = 9                 # 9-period EMA

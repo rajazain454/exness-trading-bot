@@ -72,6 +72,7 @@ class ExnessTradingBot:
         self.start_time = datetime.now(timezone.utc)
         self.last_heartbeat_time = datetime.now(timezone.utc)
         self.daily_report_date = None
+        self.last_traded_candle: Dict[str, Any] = {}
 
     def log(self, message: str, level: str = "INFO"):
         """Appends a timestamped log to the event log and persists to bot.log."""
@@ -406,33 +407,40 @@ class ExnessTradingBot:
 
                     # 6. Execute trade if valid signal and risk checks pass
                     if sig in ["BUY", "SELL"]:
-                        can_trade, reason = self.risk_manager.can_open_trade(top_sym, total_active_and_pending)
-                        if can_trade:
-                            atr_val = metrics.get("atr", 0.0)
-                            atr_pct = metrics.get("atr_pct", 50.0)
-                            trade_params = self.risk_manager.calculate_sl_tp(top_sym, sig, atr_value=atr_val, atr_percentile=atr_pct)
-                            if trade_params:
-                                trade_params["decision_basis"] = {
-                                    "setup": f"SMC Trend Confluence ({top_candidate.get('confluence_grade', 'A')})",
-                                    "grade": top_candidate.get("confluence_grade", "A"),
-                                    "chop": metrics.get("chop", 42.0),
-                                    "adx": metrics.get("adx", 25.0),
-                                    "z_score": metrics.get("z_score", 0.0),
-                                    "vol_ratio": metrics.get("vol_ratio", 1.0),
-                                    "p_win": 0.60,
-                                    "ev_r": 0.20,
-                                    "h1_trend": metrics.get("h1_trend", "BULLISH"),
-                                }
-                                ticket = self.order_manager.open_position(top_sym, sig, trade_params)
-                                if ticket:
-                                    self.log(
-                                        f"Executed {sig} on {top_sym} #{ticket} @ {trade_params['entry']} | "
-                                        f"Lot: {trade_params['lot']} | SL: {trade_params['sl']} | TP: {trade_params['tp']}",
-                                        "TRADE"
-                                    )
+                        candle_time = metrics.get("candle_time")
+                        if candle_time and self.last_traded_candle.get(top_sym) == candle_time:
+                            # Already executed a trade on this closed candle bar; wait for next candle close
+                            pass
                         else:
-                            if "limit (1) reached" not in reason:
-                                self.log(f"Signal {sig} on {top_sym} skipped: {reason}", "FILTER")
+                            can_trade, reason = self.risk_manager.can_open_trade(top_sym, total_active_and_pending)
+                            if can_trade:
+                                atr_val = metrics.get("atr", 0.0)
+                                atr_pct = metrics.get("atr_pct", 50.0)
+                                trade_params = self.risk_manager.calculate_sl_tp(top_sym, sig, atr_value=atr_val, atr_percentile=atr_pct)
+                                if trade_params:
+                                    trade_params["decision_basis"] = {
+                                        "setup": f"SMC Trend Confluence ({top_candidate.get('confluence_grade', 'A')})",
+                                        "grade": top_candidate.get("confluence_grade", "A"),
+                                        "chop": metrics.get("chop", 42.0),
+                                        "adx": metrics.get("adx", 25.0),
+                                        "z_score": metrics.get("z_score", 0.0),
+                                        "vol_ratio": metrics.get("vol_ratio", 1.0),
+                                        "p_win": 0.60,
+                                        "ev_r": 0.20,
+                                        "h1_trend": metrics.get("h1_trend", "BULLISH"),
+                                    }
+                                    ticket = self.order_manager.open_position(top_sym, sig, trade_params)
+                                    if ticket:
+                                        if candle_time:
+                                            self.last_traded_candle[top_sym] = candle_time
+                                        self.log(
+                                            f"Executed {sig} on {top_sym} #{ticket} @ {trade_params['entry']} | "
+                                            f"Lot: {trade_params['lot']} | SL: {trade_params['sl']} | TP: {trade_params['tp']}",
+                                            "TRADE"
+                                        )
+                            else:
+                                if "limit (1) reached" not in reason:
+                                    self.log(f"Signal {sig} on {top_sym} skipped: {reason}", "FILTER")
 
                     # 7. Render updated dashboard
                     dashboard = self.build_dashboard(top_candidate, active_positions)

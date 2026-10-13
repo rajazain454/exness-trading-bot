@@ -170,40 +170,57 @@ class ForexConfluenceStrategy:
                 "score": 0
             }
 
-        prev_candle = df_m5.iloc[-2]
+        require_closed = getattr(config, "REQUIRE_CLOSED_CANDLE_CONFIRMATION", True)
+        if require_closed and len(df_m5) >= 5:
+            signal_candle = df_m5.iloc[-2]
+            prev_candle = df_m5.iloc[-3]
+            prev_2_candle = df_m5.iloc[-4]
+        else:
+            signal_candle = df_m5.iloc[-1]
+            prev_candle = df_m5.iloc[-2]
+            prev_2_candle = df_m5.iloc[-3]
+
         curr_candle = df_m5.iloc[-1]
-        prev_2_candle = df_m5.iloc[-3]
+        live_close = curr_candle["close"]
 
-        close = curr_candle["close"]
-        open_price = curr_candle["open"]
-        high = curr_candle["high"]
-        low = curr_candle["low"]
-        curr_vol = curr_candle["tick_volume"]
-        vol_sma = curr_candle.get("vol_sma20", curr_vol)
-        curr_vol_ratio = curr_vol / (vol_sma + 1e-9)
+        # Evaluated on the completed (closed) signal candle
+        close = signal_candle["close"]
+        open_price = signal_candle["open"]
+        high = signal_candle["high"]
+        low = signal_candle["low"]
+        raw_time = signal_candle.get("time", curr_candle.get("time", 0))
+        if hasattr(raw_time, "timestamp"):
+            candle_time = int(raw_time.timestamp())
+        else:
+            try:
+                candle_time = int(raw_time)
+            except Exception:
+                candle_time = 0
 
-        prev_vol = prev_candle.get("tick_volume", curr_vol)
-        prev_vol_sma = prev_candle.get("vol_sma20", prev_vol)
-        prev_vol_ratio = prev_vol / (prev_vol_sma + 1e-9)
+        sig_vol = signal_candle["tick_volume"]
+        sig_vol_sma = signal_candle.get("vol_sma20", sig_vol)
+        sig_vol_ratio = sig_vol / (sig_vol_sma + 1e-9)
 
-        # Use completed signal candle volume or live volume surge to prevent false suppression on new candle opens
-        vol_ratio = max(prev_vol_ratio, curr_vol_ratio)
+        live_vol = curr_candle["tick_volume"]
+        live_vol_sma = curr_candle.get("vol_sma20", live_vol)
+        live_vol_ratio = live_vol / (live_vol_sma + 1e-9)
+        vol_ratio = max(sig_vol_ratio, live_vol_ratio)
 
-        ema_fast_val = curr_candle["ema_fast"]
-        ema_slow_val = curr_candle["ema_slow"]
-        rsi_curr = curr_candle["rsi"]
+        ema_fast_val = signal_candle["ema_fast"]
+        ema_slow_val = signal_candle["ema_slow"]
+        rsi_curr = signal_candle["rsi"]
         rsi_prev = prev_candle["rsi"]
         rsi_prev2 = prev_2_candle["rsi"]
-        atr_val = curr_candle["atr"] if not np.isnan(curr_candle["atr"]) else 0.00070
-        adx_val = curr_candle["adx"] if not np.isnan(curr_candle["adx"]) else 15.0
-        z_score_val = curr_candle["z_score"] if not np.isnan(curr_candle["z_score"]) else 0.0
-        chop_val = curr_candle["chop"] if not np.isnan(curr_candle["chop"]) else 50.0
-        vwap_val = curr_candle["vwap"] if not np.isnan(curr_candle["vwap"]) else close
+        atr_val = signal_candle["atr"] if not np.isnan(signal_candle["atr"]) else 0.00070
+        adx_val = signal_candle["adx"] if not np.isnan(signal_candle["adx"]) else 15.0
+        z_score_val = signal_candle["z_score"] if not np.isnan(signal_candle["z_score"]) else 0.0
+        chop_val = signal_candle["chop"] if not np.isnan(signal_candle["chop"]) else 50.0
+        vwap_val = signal_candle["vwap"] if not np.isnan(signal_candle["vwap"]) else close
 
         # ATR Percentile Rank
         atr_percentile = QuantitativeEngine.calculate_atr_percentile(pd.Series(df_m5["atr"], dtype=float))
 
-        # Wick Calculations
+        # Wick Calculations on confirmed closed candle
         candle_range = high - low
         if candle_range > 0:
             lower_wick = min(open_price, close) - low
@@ -214,7 +231,7 @@ class ForexConfluenceStrategy:
             lower_wick_ratio = 0.0
             upper_wick_ratio = 0.0
 
-        ema_trend_val = curr_candle.get("ema_trend", ema_slow_val)
+        ema_trend_val = signal_candle.get("ema_trend", ema_slow_val)
         m5_uptrend = (ema_fast_val > ema_slow_val) and (close > ema_fast_val) and (close >= ema_trend_val * 0.999)
         m5_downtrend = (ema_fast_val < ema_slow_val) and (close < ema_fast_val) and (close <= ema_trend_val * 1.001)
 
@@ -222,7 +239,10 @@ class ForexConfluenceStrategy:
         has_fvg, fvg_type = smc_engine.detect_recent_fvg(df_m5) if smc_engine else (False, "NONE")
 
         metrics = {
-            "close": round(close, 5),
+            "close": round(live_close, 5),
+            "signal_close": round(close, 5),
+            "candle_time": candle_time,
+            "confirmed_closed": require_closed,
             "ema_fast": round(ema_fast_val, 5),
             "ema_slow": round(ema_slow_val, 5),
             "ema_trend": round(ema_trend_val, 5),
@@ -287,24 +307,26 @@ class ForexConfluenceStrategy:
         is_pullback_zone = ema_pullback_range <= (ema_fast_val * 1.0015)
         healthy_buy_rsi = (min(rsi_curr, rsi_prev, rsi_prev2) <= 58.0) and (rsi_curr >= 38.0)
         bullish_rebound = (close >= open_price) and (close >= ema_fast_val * 0.9995)
-        if m5_uptrend and is_pullback_zone and healthy_buy_rsi and bullish_rebound:
+        live_holding_buy = (live_close >= low * 0.999) if require_closed else True
+        if m5_uptrend and is_pullback_zone and healthy_buy_rsi and bullish_rebound and live_holding_buy:
             buy_setup = "SETUP_1_PULLBACK"
 
         # Setup 2: SMC Fair Value Gap (FVG) Mitigation
         if not buy_setup and has_fvg and fvg_type == "BULLISH_FVG":
             fvg_rejection = (lower_wick_ratio >= 0.20) or (close > prev_candle["high"])
             fvg_trend_aligned = (ema_fast_val >= ema_slow_val) and (close >= ema_fast_val * 0.999)
-            if fvg_rejection and fvg_trend_aligned and (close >= open_price):
+            if fvg_rejection and fvg_trend_aligned and (close >= open_price) and live_holding_buy:
                 buy_setup = "SETUP_2_FVG_MITIGATION"
 
         # Setup 3: Institutional Momentum Expansion / Breakout (with breakout volume confirmation)
-        if not buy_setup and len(df_m5) >= 6:
-            prior_5_high = max(df_m5["high"].iloc[-6:-1])
-            micro_bos = close > prior_5_high
-            is_expansion_candle = (candle_range >= 0.95 * atr_val) and ((close - open_price) >= 0.40 * candle_range)
-            momentum_aligned = (adx_val >= 20.0) and (rsi_curr >= 52.0) and (close > ema_fast_val > ema_slow_val) and (vol_ratio >= 1.0)
-            if micro_bos and is_expansion_candle and momentum_aligned:
-                buy_setup = "SETUP_3_MOMENTUM_EXPANSION"
+        lookback_slice = df_m5["high"].iloc[-7:-2] if require_closed and len(df_m5) >= 8 else df_m5["high"].iloc[-6:-1]
+        prior_5_high = max(lookback_slice) if len(lookback_slice) > 0 else high
+        micro_bos = close > prior_5_high
+        is_expansion_candle = (candle_range >= 0.95 * atr_val) and ((close - open_price) >= 0.40 * candle_range)
+        momentum_aligned = (adx_val >= 20.0) and (rsi_curr >= 52.0) and (close > ema_fast_val > ema_slow_val) and (vol_ratio >= 1.0)
+        live_holding_expansion = (live_close >= open_price) if require_closed else True
+        if not buy_setup and micro_bos and is_expansion_candle and momentum_aligned and live_holding_expansion:
+            buy_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
         is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
         min_vol_floor = getattr(config, "MIN_VOLUME_SURGE_RATIO", 0.70)
@@ -369,24 +391,26 @@ class ForexConfluenceStrategy:
         is_pullback_zone_sell = ema_pullback_range_sell >= (ema_fast_val * 0.9985)
         healthy_sell_rsi = (max(rsi_curr, rsi_prev, rsi_prev2) >= 42.0) and (rsi_curr <= 62.0)
         bearish_rebound = (close <= open_price) and (close <= ema_fast_val * 1.0005)
-        if m5_downtrend and is_pullback_zone_sell and healthy_sell_rsi and bearish_rebound:
+        live_holding_sell = (live_close <= high * 1.001) if require_closed else True
+        if m5_downtrend and is_pullback_zone_sell and healthy_sell_rsi and bearish_rebound and live_holding_sell:
             sell_setup = "SETUP_1_PULLBACK"
 
         # Setup 2: SMC Fair Value Gap (FVG) Mitigation
         if not sell_setup and has_fvg and fvg_type == "BEARISH_FVG":
             fvg_rejection_sell = (upper_wick_ratio >= 0.20) or (close < prev_candle["low"])
             fvg_trend_aligned_sell = (ema_fast_val <= ema_slow_val) and (close <= ema_fast_val * 1.001)
-            if fvg_rejection_sell and fvg_trend_aligned_sell and (close <= open_price):
+            if fvg_rejection_sell and fvg_trend_aligned_sell and (close <= open_price) and live_holding_sell:
                 sell_setup = "SETUP_2_FVG_MITIGATION"
 
         # Setup 3: Institutional Momentum Expansion / Breakdown (with breakout volume confirmation)
-        if not sell_setup and len(df_m5) >= 6:
-            prior_5_low = min(df_m5["low"].iloc[-6:-1])
-            micro_bos_sell = close < prior_5_low
-            is_expansion_candle_sell = (candle_range >= 0.95 * atr_val) and ((open_price - close) >= 0.40 * candle_range)
-            momentum_aligned_sell = (adx_val >= 20.0) and (rsi_curr <= 48.0) and (close < ema_fast_val < ema_slow_val) and (vol_ratio >= 1.0)
-            if micro_bos_sell and is_expansion_candle_sell and momentum_aligned_sell:
-                sell_setup = "SETUP_3_MOMENTUM_EXPANSION"
+        lookback_slice_sell = df_m5["low"].iloc[-7:-2] if require_closed and len(df_m5) >= 8 else df_m5["low"].iloc[-6:-1]
+        prior_5_low = min(lookback_slice_sell) if len(lookback_slice_sell) > 0 else low
+        micro_bos_sell = close < prior_5_low
+        is_expansion_candle_sell = (candle_range >= 0.95 * atr_val) and ((open_price - close) >= 0.40 * candle_range)
+        momentum_aligned_sell = (adx_val >= 20.0) and (rsi_curr <= 48.0) and (close < ema_fast_val < ema_slow_val) and (vol_ratio >= 1.0)
+        live_holding_expansion_sell = (live_close <= open_price) if require_closed else True
+        if not sell_setup and micro_bos_sell and is_expansion_candle_sell and momentum_aligned_sell and live_holding_expansion_sell:
+            sell_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
         sell_candidate: Optional[Dict[str, Any]] = None
         sell_suppress_reason: Optional[str] = None

@@ -38,6 +38,7 @@ HIGHER_TIMEFRAME = "H1"       # Macro trend alignment timeframe
 EMA_FAST = 9                  # Fast Trend Exponential Moving Average
 EMA_SLOW = 21                 # Slow Trend Exponential Moving Average
 EMA_TREND_BASELINE = 50       # Macro Trend Baseline EMA Filter
+REQUIRE_CLOSED_CANDLE_CONFIRMATION = True # Require fully closed M5 candle confirmation (No mid-candle jumping)
 
 # ==========================================
 # QUANTITATIVE & STATISTICAL PARAMETERS

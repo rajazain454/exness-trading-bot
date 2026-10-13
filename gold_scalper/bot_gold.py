@@ -448,8 +448,11 @@ class GoldScalperBot:
                             news_reason = ev_title
 
                     # 8. Execute if valid signal, no active trades, and guards pass
+                    candle_time = metrics.get("candle_time")
                     if sig in ["BUY", "SELL"] and len(active_positions) < config_gold.MAX_OPEN_POSITIONS:
-                        if cooldown_active:
+                        if candle_time and getattr(self, "last_traded_bar_time", 0) == candle_time:
+                            pass
+                        elif cooldown_active:
                             self.log("⏸️ Cooldown Guard: Waiting for 1 full new completed M5 candle after exit.", "INFO")
                         elif self.circuit_breaker_active:
                             self.log(f"⏸️ Circuit Breaker: Paused due to {loss_limit} consecutive losses.", "WARN")
@@ -473,7 +476,9 @@ class GoldScalperBot:
                                     "wick_ratio": analysis.get("features", {}).get("wick_ratio", 0.18),
                                     "h1_trend": analysis.get("h1_trend", "BULLISH"),
                                 }
-                                self.execute_scalp(sig, atr_val, decision_basis=decision_snapshot)
+                                ticket = self.execute_scalp(sig, atr_val, decision_basis=decision_snapshot)
+                                if ticket and candle_time:
+                                    self.last_traded_bar_time = candle_time
 
                     # 9. Render dashboard
                     dashboard = self.build_dashboard(analysis, active_positions, cooldown_active, bars_remaining)

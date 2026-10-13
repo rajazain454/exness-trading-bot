@@ -277,35 +277,51 @@ class GoldScalperStrategy:
                 "metrics": {}
             }
 
+        require_closed = getattr(config_gold, "REQUIRE_CLOSED_CANDLE_CONFIRMATION", True)
+        if require_closed and len(df) >= 4:
+            sig_bar = df.iloc[-2]
+            prev_bar = df.iloc[-3]
+        else:
+            sig_bar = df.iloc[-1]
+            prev_bar = df.iloc[-2]
+
         curr = df.iloc[-1]
-        prev = df.iloc[-2]
+        live_price = float(curr["close"])
+        raw_time = sig_bar.get("time", curr.get("time", 0))
+        if hasattr(raw_time, "timestamp"):
+            candle_time = int(raw_time.timestamp())
+        else:
+            try:
+                candle_time = int(raw_time)
+            except Exception:
+                candle_time = 0
         now_utc = datetime.now(timezone.utc)
         hour = now_utc.hour
 
-        # Base price metrics
-        close = float(curr["close"])
-        open_price = float(curr["open"])
-        high = float(curr["high"])
-        low = float(curr["low"])
-        ema_f = float(curr["ema_fast"])
-        ema_s = float(curr["ema_slow"])
-        ema_t = float(curr["ema_trend"])
-        rsi_val = float(curr["rsi"])
-        atr_val = float(curr["atr"])
-        adx_val = float(curr["adx"])
-        chop_val = float(curr["chop"])
-        z_score = float(curr["z_score"])
-        vwap_val = float(curr["vwap"])
-        vol_ratio = float(curr["vol_ratio"])
-        bb_upper = float(curr["bb_upper"])
-        bb_lower = float(curr["bb_lower"])
+        # Base price metrics on completed signal candle
+        close = float(sig_bar["close"])
+        open_price = float(sig_bar["open"])
+        high = float(sig_bar["high"])
+        low = float(sig_bar["low"])
+        ema_f = float(sig_bar["ema_fast"])
+        ema_s = float(sig_bar["ema_slow"])
+        ema_t = float(sig_bar["ema_trend"])
+        rsi_val = float(sig_bar["rsi"])
+        atr_val = float(sig_bar["atr"])
+        adx_val = float(sig_bar["adx"])
+        chop_val = float(sig_bar["chop"])
+        z_score = float(sig_bar["z_score"])
+        vwap_val = float(sig_bar["vwap"])
+        vol_ratio = float(sig_bar["vol_ratio"])
+        bb_upper = float(sig_bar["bb_upper"])
+        bb_lower = float(sig_bar["bb_lower"])
 
         c_range = high - low + 1e-9
         lower_wick_ratio = (min(open_price, close) - low) / c_range
         upper_wick_ratio = (high - max(open_price, close)) / c_range
 
         # Classify Market Regime
-        regime = self.classify_market_regime(curr, prev)
+        regime = self.classify_market_regime(sig_bar, prev_bar)
         h1_trend = self.analyze_h1_macro(h1_rates)
 
         # Compute SMC Session Levels
@@ -317,7 +333,10 @@ class GoldScalperStrategy:
 
         metrics = {
             "symbol": "XAUUSDm",
-            "close": round(close, 3),
+            "close": round(live_price, 3),
+            "candle_close": round(close, 3),
+            "candle_time": candle_time,
+            "confirmed_closed": require_closed,
             "regime": regime,
             "ema_fast": round(ema_f, 3),
             "ema_slow": round(ema_s, 3),
@@ -424,16 +443,18 @@ class GoldScalperStrategy:
             # Bullish EMA pullback
             if ema_f > ema_s and close >= ema_t * 0.9995:
                 if (low <= ema_f * 1.0005 or low <= ema_s * 1.0008) and (lower_wick_ratio >= self.min_wick_ratio or close >= open_price):
-                    pullback_buy = 35
-                    if detected_setup == "NONE":
-                        detected_setup = "SETUP_2_TREND_PULLBACK"
+                    if not require_closed or live_price >= low * 0.999:
+                        pullback_buy = 35
+                        if detected_setup == "NONE":
+                            detected_setup = "SETUP_2_TREND_PULLBACK"
 
             # Bearish EMA pullback
-            if ema_f < ema_s and close <= ema_t * 1.0005:
+            elif ema_f < ema_s and close <= ema_t * 1.0005:
                 if (high >= ema_f * 0.9995 or high >= ema_s * 0.9992) and (upper_wick_ratio >= self.min_wick_ratio or close <= open_price):
-                    pullback_sell = 35
-                    if detected_setup == "NONE":
-                        detected_setup = "SETUP_2_TREND_PULLBACK"
+                    if not require_closed or live_price <= high * 1.001:
+                        pullback_sell = 35
+                        if detected_setup == "NONE":
+                            detected_setup = "SETUP_2_TREND_PULLBACK"
 
         # --- 4. BREAKOUT + RETEST (Setup 3) (Max 30 pts) ---
         retest_buy = 0
