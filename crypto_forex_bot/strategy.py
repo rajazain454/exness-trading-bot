@@ -312,8 +312,8 @@ class ForexConfluenceStrategy:
         # -------------------------------------------------------------
         # BUY CONFLUENCE VALIDATION
         # -------------------------------------------------------------
-        buy_candidate = None
-        buy_suppress_reason = None
+        buy_candidate: Optional[Dict[str, Any]] = None
+        buy_suppress_reason: Optional[str] = None
         if buy_setup:
             if buy_setup not in allowed_setups:
                 buy_suppress_reason = f"M5 Buy [{buy_setup}] suppressed by Market Regime ({regime_info['regime']}): {regime_info['description']}."
@@ -388,8 +388,8 @@ class ForexConfluenceStrategy:
             if micro_bos_sell and is_expansion_candle_sell and momentum_aligned_sell:
                 sell_setup = "SETUP_3_MOMENTUM_EXPANSION"
 
-        sell_candidate = None
-        sell_suppress_reason = None
+        sell_candidate: Optional[Dict[str, Any]] = None
+        sell_suppress_reason: Optional[str] = None
         if sell_setup:
             if sell_setup not in allowed_setups:
                 sell_suppress_reason = f"M5 Sell [{sell_setup}] suppressed by Market Regime ({regime_info['regime']}): {regime_info['description']}."
@@ -438,12 +438,24 @@ class ForexConfluenceStrategy:
         # -------------------------------------------------------------
         # FINAL SIGNAL ARBITRATION (SYMMETRIC DUAL-DIRECTION)
         # -------------------------------------------------------------
-        if buy_candidate and not sell_candidate:
+        if buy_candidate is not None and sell_candidate is not None:
+            buy_score = int(buy_candidate.get("score", 0))
+            sell_score = int(sell_candidate.get("score", 0))
+            if buy_score > sell_score:
+                return buy_candidate
+            elif sell_score > buy_score:
+                return sell_candidate
+            else:
+                return {
+                    "signal": "HOLD",
+                    "reason": f"Signal conflict on {symbol}: BUY score ({buy_score}) == SELL score ({sell_score}). Awaiting directional clarity.",
+                    "metrics": metrics,
+                    "score": 0
+                }
+        elif buy_candidate is not None:
             return buy_candidate
-        elif sell_candidate and not buy_candidate:
+        elif sell_candidate is not None:
             return sell_candidate
-        elif buy_candidate and sell_candidate:
-            return buy_candidate if buy_candidate["score"] >= sell_candidate["score"] else sell_candidate
         else:
             default_reason = buy_suppress_reason or sell_suppress_reason or f"Scanning market. M5={metrics['m5_trend']} | H1={h1_trend} | CHOP={chop_val:.1f} | Z={z_score_val:+.2f}"
             return {
