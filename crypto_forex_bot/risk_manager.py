@@ -291,16 +291,9 @@ class RiskManager:
             elif threshold <= equity < 150.0:
                 lot = getattr(config, "SCALED_LOT_SIZE", 0.02)
 
-        # Equity Curve Throttle: reduce risk by 50% during consecutive losses or negative daily drift
+        # Equity Curve Throttle: reduce risk by 50% strictly during consecutive live losses
         if self.consecutive_losses >= 2:
             lot = max(config.BASE_LOT_SIZE, round(lot * 0.5, 2))
-        elif hasattr(self, "journal") and self.journal:
-            try:
-                stats = self.journal.get_today_summary()
-                if stats.get("net_pnl", 0.0) < -2.0:
-                    lot = max(config.BASE_LOT_SIZE, round(lot * 0.5, 2))
-            except Exception:
-                pass
 
         # Broker symbol compliance: volume_min, volume_max, volume_step
         s_info = mt5.symbol_info(symbol) if symbol else None

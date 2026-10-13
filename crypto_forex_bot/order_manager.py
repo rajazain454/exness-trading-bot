@@ -259,8 +259,8 @@ class OrderManager(BaseOrderManager):
             if risk_dist > 0:
                 be_trigger = risk_dist * 0.50
                 be_offset = risk_dist * 0.10
-                trail_dist = risk_dist
-                trail_step = risk_dist * 0.20
+                trail_dist = risk_dist * 1.50
+                trail_step = risk_dist * 0.25
                 partial_tp_dist = risk_dist * 0.80
             else:
                 be_trigger = config.BREAKEVEN_TRIGGER_PIPS * pip_size
