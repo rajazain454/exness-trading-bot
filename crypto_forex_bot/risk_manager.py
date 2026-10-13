@@ -419,6 +419,15 @@ class RiskManager:
                     f"Protecting accumulated daily gains (Threshold was ${min_lock_gain:.2f})."
                 )
 
+        # Micro balance graduation threshold for Crypto
+        is_crypto = any(c in symbol.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+        min_crypto_eq = getattr(config, "MIN_EQUITY_FOR_CRYPTO", 100.0)
+        if is_crypto and acc["equity"] < min_crypto_eq:
+            return False, (
+                f"Crypto temporarily benched on micro balance (${acc['equity']:.2f} < ${min_crypto_eq:.2f}). "
+                f"Compounding capital safely on high-win-rate Forex crosses until ${min_crypto_eq:.2f} milestone."
+            )
+
         spread_pips = self.connector.get_current_spread_pips(symbol)
         max_allowed_spread = getattr(config, "MAX_SPREAD_PIPS_CRYPTO", 2500.0) if any(c in symbol for c in ["BTC", "ETH", "SOL", "XRP"]) else getattr(config, "MAX_SPREAD_PIPS", 3.5)
         if spread_pips > max_allowed_spread:

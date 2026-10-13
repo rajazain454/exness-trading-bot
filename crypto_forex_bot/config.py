@@ -28,10 +28,11 @@ SYMBOL = os.getenv("TRADING_SYMBOL", "BTCUSDm")
 USE_MULTI_PAIR_BASKET = True  # Scans major pairs and picks the best setup
 # Curated High-Expectancy Liquid Pairs with Proven Positive Edge on Exness.
 # Disabled altcoins (SOLUSDm, XRPUSDm) are replaced with tradeable, high-volatility crosses (GBPJPYm, EURJPYm).
-SYMBOLS_BASKET = ["BTCUSDm", "ETHUSDm", "GBPJPYm", "EURJPYm", "USDJPYm", "GBPUSDm"]
+SYMBOLS_BASKET = ["GBPJPYm", "EURJPYm", "USDJPYm", "GBPUSDm", "USDCADm", "BTCUSDm"]
 ENABLE_AUTO_DISCOVERY = True  # Automatically queries MT5 on startup to substitute any disabled symbol with tradeable alternatives
-AUTO_DISCOVERY_CANDIDATES = ["BTCUSDm", "ETHUSDm", "GBPJPYm", "EURJPYm", "USDJPYm", "GBPUSDm", "USDCADm", "EURGBPm"]
+AUTO_DISCOVERY_CANDIDATES = ["GBPJPYm", "EURJPYm", "USDJPYm", "GBPUSDm", "USDCADm", "BTCUSDm", "ETHUSDm"]
 NEGATIVE_EDGE_SYMBOLS = ["AUDUSDm"]
+MIN_EQUITY_FOR_CRYPTO = 100.0 # Temporarily bench Crypto on micro balances (< $100). Auto-unlocks once equity reaches $100 milestone!
 
 TIMEFRAME = "M5"              # Primary execution timeframe
 HIGHER_TIMEFRAME = "H1"       # Macro trend alignment timeframe
