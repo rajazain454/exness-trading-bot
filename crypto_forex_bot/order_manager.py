@@ -257,11 +257,11 @@ class OrderManager(BaseOrderManager):
             # Derive dynamic targets from actual initial stop distance if available
             risk_dist = abs(pos.price_open - pos.sl) if pos.sl > 0 else 0.0
             if risk_dist > 0:
-                be_trigger = risk_dist * 0.50
+                be_trigger = risk_dist * 0.90
                 be_offset = risk_dist * 0.10
                 trail_dist = risk_dist * 1.50
                 trail_step = risk_dist * 0.25
-                partial_tp_dist = risk_dist * 0.80
+                partial_tp_dist = risk_dist * 1.25
             else:
                 be_trigger = config.BREAKEVEN_TRIGGER_PIPS * pip_size
                 be_offset = config.BREAKEVEN_OFFSET_PIPS * pip_size
@@ -285,6 +285,7 @@ class OrderManager(BaseOrderManager):
                     close_vol = max(vol_min, close_vol)
                     if (pos.volume - close_vol) >= vol_min and self.close_partial_position(pos, close_vol):
                         pos_meta["partial_closed"] = True
+                        pos_meta["be_locked"] = True
                         remaining_vol = round(pos.volume - close_vol, step_decimals)
                         pips_banked = current_profit_distance / pip_size
                         pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
@@ -295,7 +296,8 @@ class OrderManager(BaseOrderManager):
                         self.notifier.notify_partial_tp_locked(symbol, ticket, close_vol, remaining_vol, pnl_banked, be_price)
                         continue
 
-                if current_profit_distance >= be_trigger and not pos_meta.get("be_locked"):
+                # Standalone Break-Even: only triggers if position cannot partial-close (e.g. 0.01 lot) or already partial-closed
+                if not can_partial_close and current_profit_distance >= be_trigger and not pos_meta.get("be_locked"):
                     if pos.sl < be_price:
                         if self.update_sl(pos, be_price):
                             pos_meta["be_locked"] = True
@@ -326,6 +328,7 @@ class OrderManager(BaseOrderManager):
                     close_vol = max(vol_min, close_vol)
                     if (pos.volume - close_vol) >= vol_min and self.close_partial_position(pos, close_vol):
                         pos_meta["partial_closed"] = True
+                        pos_meta["be_locked"] = True
                         remaining_vol = round(pos.volume - close_vol, step_decimals)
                         pips_banked = current_profit_distance / pip_size
                         pip_dollar_val = self.connector.get_pip_dollar_value(symbol, close_vol)
@@ -336,7 +339,8 @@ class OrderManager(BaseOrderManager):
                         self.notifier.notify_partial_tp_locked(symbol, ticket, close_vol, remaining_vol, pnl_banked, be_price)
                         continue
 
-                if current_profit_distance >= be_trigger and not pos_meta.get("be_locked"):
+                # Standalone Break-Even: only triggers if position cannot partial-close (e.g. 0.01 lot) or already partial-closed
+                if not can_partial_close and current_profit_distance >= be_trigger and not pos_meta.get("be_locked"):
                     if pos.sl == 0.0 or pos.sl > be_price:
                         if self.update_sl(pos, be_price):
                             pos_meta["be_locked"] = True

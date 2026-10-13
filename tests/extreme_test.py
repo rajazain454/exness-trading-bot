@@ -474,7 +474,7 @@ def test_gold_scalper_bot_lifecycle_and_execution_stress():
 
     assert len(order_sends) == 2, f"Expected 2 order requests, got {len(order_sends)}"
     assert order_sends[0]["action"] == mt5.TRADE_ACTION_DEAL and order_sends[0]["volume"] == 0.01
-    assert order_sends[1]["action"] == mt5.TRADE_ACTION_SLTP and order_sends[1]["sl"] in [2000.10, 2000.15]
+    assert order_sends[1]["action"] == mt5.TRADE_ACTION_SLTP and order_sends[1]["sl"] in [2000.10, 2000.15, 2000.50]
     assert mock_ticket in bot.active_be_locked
     console.print(f"  [green][PASS][/green] Position Management: Partial TP (0.01 lot) and Break-Even Lock (${order_sends[1]['sl']:.2f}) verified")
 

@@ -292,10 +292,13 @@ class GoldOrderManager(BaseOrderManager):
         acc = mt5.account_info()
         equity = acc.equity if acc else 80.0
 
-        # Two-Tier Profit Scaling ($75-$100 Milestone)
-        # Unlocks institutional 50% TP1 partial profit-taking (0.01 banked) + 50% runner (0.01)
-        if getattr(config_gold, "ENABLE_TWO_TIER_SCALING", True) and equity >= getattr(config_gold, "TWO_TIER_EQUITY_THRESHOLD", 75.0):
-            target_lots = getattr(config_gold, "SCALED_LOT_SIZE", 0.02)
+        # Compounding Scaling:
+        # Micro protection: Enforce 0.01 lot under $150 equity (caps risk at max $2.50).
+        # Above $150 equity: scales dynamically by 0.01 lot per $100 equity (e.g. $150 -> 0.02, $250 -> 0.03, etc.)
+        gold_scale_thresh = getattr(config_gold, "TWO_TIER_EQUITY_THRESHOLD", 150.0)
+        if getattr(config_gold, "ENABLE_TWO_TIER_SCALING", True) and equity >= gold_scale_thresh:
+            scaled_units = int(equity // 100.0)
+            target_lots = round(max(0.02, min(0.10, scaled_units * 0.01)), 2)
         else:
             target_lots = getattr(config_gold, "BASE_LOT_SIZE", 0.01)
 

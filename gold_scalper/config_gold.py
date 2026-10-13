@@ -85,15 +85,15 @@ ATR_TP_MULTIPLIER = 1.8      # Baseline dynamic Take Profit multiplier (1.8x ATR
 MAX_TP_DOLLARS = 3.50        # Hard cap on Take Profit: max $3.00 - $3.50 profit on 0.01 lot ($3.50 price distance)
 MIN_TP_DOLLARS = 2.50        # Minimum TP floor ($2.50 price distance -> ensures positive R:R)
 USE_PARTIAL_TP = True
-PARTIAL_TP_ATR_MULT = 0.70   # TP1 partial close at 0.7x ATR distance (~$1.50 to lock Break-Even early)
+PARTIAL_TP_ATR_MULT = 1.20   # TP1 partial close at 1.2x ATR distance (~$2.20 - $2.50 profit)
 PARTIAL_TP_RATIO = PARTIAL_TP_ATR_MULT # Backward-compatibility alias
-BREAK_EVEN_BUFFER_USD = 0.15 # Move SL to Entry + $0.15 when TP1 is banked
-BREAK_EVEN_BUFFER_PIPS = 1.5 # Legacy alias ($0.15 on Gold)
+BREAK_EVEN_BUFFER_USD = 0.50 # Move SL to Entry + $0.50 when TP1 is banked (locks +$0.50 profit)
+BREAK_EVEN_BUFFER_PIPS = 5.0 # Legacy alias ($0.50 on Gold)
 
 # Trailing Stop
 ENABLE_TRAILING_STOP = True
-TRAILING_ATR_MULT = 1.15     # Trailing distance = SL distance = 1.15x ATR
-TRAILING_STEP_USD = 0.25     # Ratchet step: minimum $0.25 advance before updating SL
+TRAILING_ATR_MULT = 1.25     # Trailing distance = 1.25x ATR ($2.50 buffer)
+TRAILING_STEP_USD = 0.30     # Ratchet step: minimum $0.30 advance before updating SL
 
 # ==========================================
 # FILTERS & SAFETY GUARDS
