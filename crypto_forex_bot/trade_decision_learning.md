@@ -151,3 +151,26 @@
 > Setup respected structure. Profit banked within target parameters. Cooldown active for 1 M5 candle before re-scanning.
 
 ---
+
+### 📊 Trade #2048136788 | BTCUSDm BUY (2026-10-13 08:08:49 UTC)
+* **Outcome**: **🟢 PROFIT HIT** | **Realized PnL**: `+$1.82` (+8877.0 pips)
+* **Exit Reason**: `Trailing Stop / SL Hit`
+* **Execution Parameters**:
+  * **Entry Price**: `83871.040`
+  * **Planned SL**: `83959.810` (Risk: $0.89)
+  * **Planned TP**: `84124.700` (Target: $2.54)
+  * **Actual Exit**: `83959.810`
+
+* **Decision Basis & Strategy Confluence**:
+  * **Core Setup**: `SMC Trend Confluence (A)` (Grade: `A`)
+  * **Choppiness Index**: `55.0` (Reference: `< 50` = Trending)
+  * **Trend Strength (ADX)**: `39.2`
+  * **Z-Score from VWAP**: `1.80` (Exhaustion guard: `< 1.4`)
+  * **Volume Surge Ratio**: `0.99x` average
+  * **ML Win Probability $P(Win)$**: `60.0%` | **Expected Value $E[R]$**: `+0.20R`
+
+> [!TIP]
+> #### ✅ Successful Execution Takeaway:
+> Setup respected structure. Profit banked within target parameters. Cooldown active for 1 M5 candle before re-scanning.
+
+---

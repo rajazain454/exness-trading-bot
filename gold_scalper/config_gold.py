@@ -63,10 +63,10 @@ SESSION_END_HOUR_UTC = 17
 # SCALPING RISK & POSITION SIZING
 # ==========================================
 RISK_PER_TRADE_PERCENT = 0.50 # Risk 0.50% equity per scalp (suitable for $25 - $1000 accounts)
-ENABLE_TWO_TIER_SCALING = True # Automatically scale lot size to 0.02 once equity >= $75
-TWO_TIER_EQUITY_THRESHOLD = 75.0 # $75 - $80 milestone
-BASE_LOT_SIZE = 0.01          # Minimum lot size for micro accounts under $75
-SCALED_LOT_SIZE = 0.02        # 0.02 lot enables 50% TP1 partial close (0.01) + runner (0.01)
+ENABLE_TWO_TIER_SCALING = True # Automatically scale lot size once equity milestone is reached
+TWO_TIER_EQUITY_THRESHOLD = 150.0 # Gold stays at 0.01 lot until $150 equity (protects against high Gold pip value)
+BASE_LOT_SIZE = 0.01          # Minimum lot size for micro accounts under $150 (max loss ~$2.50)
+SCALED_LOT_SIZE = 0.02        # 0.02 lot enables 50% TP1 partial close on $150+ accounts
 MAX_OPEN_POSITIONS = 1       # Strict 1 position max at any time
 MAX_DAILY_LOSS_USD = 8.00    # Hard daily equity stop (scaled to $8.00 on $80 account)
 MAX_DAILY_TRADES = None      # No trade count limits (unlimited trades when valid setups occur)
@@ -78,19 +78,19 @@ CONSECUTIVE_LOSS_COOLDOWN_BARS = 6 # 6 M5 bars (30 min) cooling period after cir
 
 # Dynamic ATR Stop Loss & Take Profit for Gold
 ATR_PERIOD = 14
-ATR_SL_MULTIPLIER = 1.3      # Stop Loss = 1.3 x ATR
-ATR_TP_MULTIPLIER = 1.8      # Baseline dynamic Take Profit multiplier (1.8x ATR)
+ATR_SL_MULTIPLIER = 1.15     # Tightened Stop Loss = 1.15 x ATR (caps loss to ~$2.50 on 0.01 lot)
+ATR_TP_MULTIPLIER = 1.8      # Baseline dynamic Take Profit multiplier (1.8x ATR -> $3.00 - $3.50 target)
 MAX_TP_DOLLARS = 3.50        # Hard cap on Take Profit: max $3.00 - $3.50 profit on 0.01 lot ($3.50 price distance)
-MIN_TP_DOLLARS = 2.00        # Minimum TP floor ($2.00 price distance)
+MIN_TP_DOLLARS = 2.50        # Minimum TP floor ($2.50 price distance -> ensures positive R:R)
 USE_PARTIAL_TP = True
-PARTIAL_TP_ATR_MULT = 0.8    # TP1 partial close at 0.8x ATR distance (~$1.50 - $2.00 to lock Break-Even early)
+PARTIAL_TP_ATR_MULT = 0.70   # TP1 partial close at 0.7x ATR distance (~$1.50 to lock Break-Even early)
 PARTIAL_TP_RATIO = PARTIAL_TP_ATR_MULT # Backward-compatibility alias
 BREAK_EVEN_BUFFER_USD = 0.15 # Move SL to Entry + $0.15 when TP1 is banked
 BREAK_EVEN_BUFFER_PIPS = 1.5 # Legacy alias ($0.15 on Gold)
 
 # Trailing Stop
 ENABLE_TRAILING_STOP = True
-TRAILING_ATR_MULT = 1.3      # Trailing distance = SL distance = 1.3x ATR
+TRAILING_ATR_MULT = 1.15     # Trailing distance = SL distance = 1.15x ATR
 TRAILING_STEP_USD = 0.25     # Ratchet step: minimum $0.25 advance before updating SL
 
 # ==========================================

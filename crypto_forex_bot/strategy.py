@@ -180,7 +180,14 @@ class ForexConfluenceStrategy:
         low = curr_candle["low"]
         curr_vol = curr_candle["tick_volume"]
         vol_sma = curr_candle.get("vol_sma20", curr_vol)
-        vol_ratio = curr_vol / (vol_sma + 1e-9)
+        curr_vol_ratio = curr_vol / (vol_sma + 1e-9)
+
+        prev_vol = prev_candle.get("tick_volume", curr_vol)
+        prev_vol_sma = prev_candle.get("vol_sma20", prev_vol)
+        prev_vol_ratio = prev_vol / (prev_vol_sma + 1e-9)
+
+        # Use completed signal candle volume or live volume surge to prevent false suppression on new candle opens
+        vol_ratio = max(prev_vol_ratio, curr_vol_ratio)
 
         ema_fast_val = curr_candle["ema_fast"]
         ema_slow_val = curr_candle["ema_slow"]

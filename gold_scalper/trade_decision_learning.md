@@ -427,3 +427,29 @@
 > Setup respected structure. Profit banked within target parameters. Cooldown active for 1 M5 candle before re-scanning.
 
 ---
+
+### 📊 Trade #2048823101 | XAUUSDm BUY (2026-10-13 10:42:17 UTC)
+* **Outcome**: **🔴 STOP LOSS HIT** | **Realized PnL**: `-$6.90` (-345.1 pips)
+* **Exit Reason**: `Trailing Stop / SL Hit`
+* **Execution Parameters**:
+  * **Entry Price**: `4183.635`
+  * **Planned SL**: `4180.184` (Risk: $6.90)
+  * **Planned TP**: `4187.135` (Target: $7.00)
+  * **Actual Exit**: `4180.184`
+
+* **Decision Basis & Strategy Confluence**:
+  * **Core Setup**: `Institutional Gold Scalp (Grade A+)` (Grade: `A+`)
+  * **Choppiness Index**: `42.0` (Reference: `< 50` = Trending)
+  * **Trend Strength (ADX)**: `25.0`
+  * **Z-Score from VWAP**: `0.00` (Exhaustion guard: `< 1.4`)
+  * **Volume Surge Ratio**: `1.00x` average
+  * **ML Win Probability $P(Win)$**: `60.0%` | **Expected Value $E[R]$**: `+0.20R`
+
+> [!WARNING]
+> #### 🧠 Stop Loss Post-Mortem & Mistake Diagnosis:
+> * **Failure Mode**: `LIQUIDITY_HUNT_SPIKE`
+> * **Root-Cause Analysis**: Market executed a secondary liquidity grab or spread spike that clipped the Stop Loss before reversing back into the intended direction.
+> * **Key Lesson Learned**: Slightly widen buffer or place stops beyond swing structure rather than arbitrary tight points.
+> * **Adaptive Feedback Loop**: Enhanced post-loss cooldown: 2 completed M5 candles required before scanning this symbol again.
+
+---

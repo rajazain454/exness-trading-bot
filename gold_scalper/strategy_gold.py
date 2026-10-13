@@ -36,7 +36,7 @@ class GoldScalperStrategy:
         self.z_max = config_gold.Z_SCORE_PULLBACK_MAX
         self.min_wick_ratio = getattr(config_gold, "MIN_WICK_PERCENT", 15.0) / 100.0
         self.liquidity_engine = GoldLiquidityEngine(sweep_min_usd=0.20, min_rejection_wick=self.min_wick_ratio)
-        self.min_confluence_threshold = 65  # Confluence threshold aligned with ML validation (Grade B+ baseline)
+        self.min_confluence_threshold = 70  # Higher conviction threshold for Gold (Grade A baseline)
         self.ml_engine = GoldMLProbabilityEngine(
             min_p_win=0.55,
             min_ev_r=0.15,
