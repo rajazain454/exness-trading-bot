@@ -165,14 +165,21 @@ class TradeJournal:
             "slippage_pips": row[13]
         }
 
-    def get_today_summary(self) -> Dict[str, Any]:
-        """Calculates today's closed trades summary."""
+    def get_today_summary(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+        """Calculates today's closed trades summary, optionally filtered by symbol."""
         today_prefix = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        query = """
-            SELECT outcome, pnl_usd, pips FROM trades 
-            WHERE exit_time LIKE ? AND exit_time IS NOT NULL
-        """
-        rows = self._execute(query, (f"{today_prefix}%",), fetch=True, fetchall=True)
+        if symbol:
+            query = """
+                SELECT outcome, pnl_usd, pips FROM trades 
+                WHERE exit_time LIKE ? AND symbol = ? AND exit_time IS NOT NULL
+            """
+            rows = self._execute(query, (f"{today_prefix}%", symbol), fetch=True, fetchall=True)
+        else:
+            query = """
+                SELECT outcome, pnl_usd, pips FROM trades 
+                WHERE exit_time LIKE ? AND exit_time IS NOT NULL
+            """
+            rows = self._execute(query, (f"{today_prefix}%",), fetch=True, fetchall=True)
 
         rows = rows or []
         total = len(rows)

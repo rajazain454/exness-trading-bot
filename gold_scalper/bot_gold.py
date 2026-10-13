@@ -85,6 +85,7 @@ class GoldScalperBot:
         self.circuit_breaker_active = False
         self.circuit_breaker_until_bar = 0
         self.daily_report_date = None
+        self.daily_start_balance = 0.0
 
         # Initialize Economic News Filter
         self.news_filter = None
@@ -248,22 +249,26 @@ class GoldScalperBot:
         else:
             acc_table.add_row(f"{target_lot:.2f} Lot Margin", f"[bold green]${needed_margin:.2f} (Ready{tier_tag})[/bold green]")
 
-        max_daily_loss = getattr(config_gold, "MAX_DAILY_LOSS_USD", 5.00)
+        if getattr(self, "daily_start_balance", 0.0) <= 0.0 and acc:
+            self.daily_start_balance = acc.balance
+
+        max_daily_loss = getattr(config_gold, "MAX_DAILY_LOSS_USD", 8.00)
         daily_loss_hit = False
         try:
-            today_stats = self.journal.get_today_summary()
+            today_stats = self.journal.get_today_summary(symbol=self.symbol)
             j_pnl = today_stats.get("net_pnl", 0.0)
             j_wins = today_stats.get("wins", 0)
             j_losses = today_stats.get("losses", 0)
             j_wr = today_stats.get("win_rate", 0.0)
-            daily_loss_hit = (j_pnl <= -max_daily_loss)
-            acc_table.add_row("Today's Closed P&L", f"[{'bold green' if j_pnl >= 0 else 'bold red'}]${j_pnl:+.2f}[/] ({j_wins}W/{j_losses}L - {j_wr:.0f}%)")
+            live_drawdown = (acc.equity - self.daily_start_balance) if (acc and self.daily_start_balance > 0) else 0.0
+            daily_loss_hit = (live_drawdown <= -max_daily_loss)
+            acc_table.add_row("Gold Closed P&L", f"[{'bold green' if j_pnl >= 0 else 'bold red'}]${j_pnl:+.2f}[/] ({j_wins}W/{j_losses}L - {j_wr:.0f}%)")
         except Exception:
-            acc_table.add_row("Today's Closed P&L", "$0.00 (0W/0L)")
+            acc_table.add_row("Gold Closed P&L", "$0.00 (0W/0L)")
 
         # Risk state display (unlimited trade count, capital drawdown protected)
         if daily_loss_hit:
-            acc_table.add_row("Daily Equity Guard", "[bold red]LOCKED (-$5.00 Max Drawdown Reached)[/bold red]")
+            acc_table.add_row("Daily Equity Guard", f"[bold red]LOCKED (-${max_daily_loss:.2f} Max Drawdown Reached)[/bold red]")
         else:
             acc_table.add_row("Daily Equity Guard", f"[bold green]OK (Max Loss: -${max_daily_loss:.2f} | Trades: Unlimited)[/bold green]")
 
@@ -425,13 +430,12 @@ class GoldScalperBot:
 
                     # 6. Check Daily Equity Drawdown Limit (Uncapped trades, but equity protected)
                     daily_drawdown_locked = False
-                    max_loss = getattr(config_gold, "MAX_DAILY_LOSS_USD", 5.00)
-                    try:
-                        today_stats = self.journal.get_today_summary()
-                        if today_stats.get("net_pnl", 0.0) <= -max_loss:
+                    max_loss = getattr(config_gold, "MAX_DAILY_LOSS_USD", 8.00)
+                    acc_check = mt5.account_info()
+                    if acc_check and getattr(self, "daily_start_balance", 0.0) > 0:
+                        live_pnl = acc_check.equity - self.daily_start_balance
+                        if live_pnl <= -max_loss:
                             daily_drawdown_locked = True
-                    except Exception:
-                        pass
 
                     # 7. Check High-Impact News Blackout
                     news_blackout = False
