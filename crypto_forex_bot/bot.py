@@ -247,7 +247,7 @@ class ExnessTradingBot:
         layout["account_box"].update(Panel(acc_table, title="[bold]Financials & Currency Strength (CSM)[/bold]", border_style="blue"))
 
         # Scanner & SMC Box
-        sym = top_candidate.get("symbol", self.basket_symbols[0] if self.basket_symbols else "BTCUSDm")
+        sym = top_candidate.get("symbol", self.basket_symbols[0] if self.basket_symbols else "GBPJPYm")
         sig = top_candidate.get("signal", "HOLD")
         score = top_candidate.get("score", 0)
         metrics = top_candidate.get("metrics", {})
@@ -318,8 +318,16 @@ class ExnessTradingBot:
             self.csm.calculate_strengths()
 
         best_candidate = None
+        acc = self.connector.get_account_summary()
+        current_eq = acc.get("equity", 0.0)
+        min_crypto_eq = getattr(config, "MIN_EQUITY_FOR_CRYPTO", 100.0)
 
         for sym in self.basket_symbols:
+            # Dynamic equity milestone gate: Do not scan or focus benched Crypto on micro accounts (< $100)
+            is_crypto = any(c in sym.upper() for c in ["BTC", "ETH", "SOL", "XRP"])
+            if is_crypto and current_eq < min_crypto_eq:
+                continue
+
             m5_rates = self.connector.get_rates(sym, config.TIMEFRAME, count=250)
             h1_rates = self.connector.get_rates(sym, config.HIGHER_TIMEFRAME, count=250)
             analysis = self.strategy.analyze(m5_rates, h1_rates, csm_engine=self.csm, smc_engine=self.smc, symbol=sym)
@@ -356,7 +364,7 @@ class ExnessTradingBot:
                         best_candidate = candidate
 
         if best_candidate is None:
-            fallback_sym = self.basket_symbols[0] if self.basket_symbols else "BTCUSDm"
+            fallback_sym = self.basket_symbols[0] if self.basket_symbols else "GBPJPYm"
             best_candidate = {
                 "symbol": fallback_sym,
                 "signal": "HOLD",

@@ -24,7 +24,7 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 # ==========================================
 # TRADING INSTRUMENT & BASKET SCANNER
 # ==========================================
-SYMBOL = os.getenv("TRADING_SYMBOL", "BTCUSDm")
+SYMBOL = os.getenv("TRADING_SYMBOL", "GBPJPYm")
 USE_MULTI_PAIR_BASKET = True  # Scans major pairs and picks the best setup
 # Curated High-Expectancy Liquid Pairs with Proven Positive Edge on Exness.
 # Disabled altcoins (SOLUSDm, XRPUSDm) are replaced with tradeable, high-volatility crosses (GBPJPYm, EURJPYm).
