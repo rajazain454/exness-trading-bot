@@ -56,10 +56,11 @@ class GoldOrderManager(BaseOrderManager):
         atr_val: float,
         current_m5_bar_time: int = 0,
         positions: Optional[List[Any]] = None,
+        current_sig: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Manages Closed Trade Detection, Partial TP, Break-Even, and Dynamic ATR Trailing Stop
-        for Gold scalping positions.
+        Manages Closed Trade Detection, Partial TP, Break-Even, Dynamic TP Magnet,
+        Time-Decay harvesting, and Early Structural Defense for Gold scalping positions.
         """
         active_positions = positions if positions is not None else self.get_gold_positions()
         active_tickets = {p.ticket for p in active_positions}
@@ -98,6 +99,7 @@ class GoldOrderManager(BaseOrderManager):
                     "trailing_sl": p.sl,
                     "last_trail_price": p.price_open,
                     "entry_time": getattr(p, "time", time.time()),
+                    "first_seen_time": time.time(),
                 }
             elif is_be_already:
                 self.tracked_positions[p.ticket]["be_locked"] = True
@@ -141,6 +143,7 @@ class GoldOrderManager(BaseOrderManager):
                 be_buffer=be_buffer,
                 trail_dist=trail_dist,
                 trail_step=trail_step,
+                current_sig=current_sig,
             )
 
         return closed_trades
@@ -156,12 +159,14 @@ class GoldOrderManager(BaseOrderManager):
         be_buffer: float,
         trail_dist: float,
         trail_step: float,
+        current_sig: Optional[str] = None,
     ):
         """
         Smart Adaptive Position Management:
-        1. Dynamic TP Magnet (Adaptive Profit Compression / Exit):
-           Monitors hesitation once profit >= +$0.75. If profit pulls back 20¢ from peak
-           or stalls for >= 20 seconds, banks the profit immediately (matching manual scalping wins).
+        0. Early Structural Defense: Cuts losing position early if confirmed opposite signal occurs.
+        1. Dynamic TP Magnet (Adaptive Profit Compression / Stall Exit with Time-Decay):
+           - Minutes 0 to 6: Targets +$0.75 to +$1.20+. Exits if profit stalls 20s or pulls back 20¢ from peak.
+           - After 6 minutes (Sluggish Trade): Lowers bar to +$0.40. Exits if profit stalls 15s or pulls back 15¢.
         2. Safe Ratchet Trailing Stop (NO Premature Breakeven!):
            Only activates when floating profit exceeds +$1.30, maintaining a wide $0.70 breathing
            cushion so the trade is never choked prematurely at +$0.50.
@@ -189,9 +194,15 @@ class GoldOrderManager(BaseOrderManager):
                 "peak_time": time.time(),
                 "profit_start_time": time.time() if profit_dist > 0 else None,
                 "entry_time": getattr(p, "time", time.time()),
+                "first_seen_time": time.time(),
             }
 
         pos_data = self.tracked_positions[ticket]
+        if "first_seen_time" not in pos_data:
+            pos_data["first_seen_time"] = time.time()
+
+        elapsed_sec = time.time() - pos_data["first_seen_time"]
+        elapsed_min = elapsed_sec / 60.0
 
         # Update peak floating profit observed
         if profit_dist > pos_data.get("peak_profit", 0.0):
@@ -199,6 +210,17 @@ class GoldOrderManager(BaseOrderManager):
             pos_data["peak_time"] = time.time()
 
         peak_profit = pos_data.get("peak_profit", 0.0)
+
+        # -------------------------------------------------------------
+        # 0. EARLY STRUCTURAL INVALIDATION DEFENSE
+        # -------------------------------------------------------------
+        if getattr(config_gold, "ENABLE_EARLY_STRUCTURE_DEFENSE", True) and current_sig in ["BUY", "SELL"]:
+            is_opposite = (is_buy and current_sig == "SELL") or (not is_buy and current_sig == "BUY")
+            if is_opposite and profit_dist < 0:
+                exit_reason = f"Structural Defense: Flipped to {current_sig} (Early exit at ${profit_dist:+.2f})"
+                logger.info(f"🛡️ {exit_reason} on Gold #{ticket}")
+                self.close_position(p, reason=exit_reason)
+                return
 
         # Stage 0: Scaled Multi-lot Partial TP (for accounts trading >= 0.02 lot)
         if cur_vol >= (min_vol * 2) and profit_dist >= target_tp1 and ticket not in self.active_be_locked:
@@ -222,11 +244,27 @@ class GoldOrderManager(BaseOrderManager):
                 logger.info(f"🎯 TP1 hit on Gold #{ticket}: Closed {close_vol} lots @ {current_price:.2f}")
 
         # -------------------------------------------------------------
-        # 1. DYNAMIC TP MAGNET (Adaptive Profit Compression / Stall Exit)
+        # 1. DYNAMIC TP MAGNET (With Time-Decay for Sluggish Trades)
         # -------------------------------------------------------------
-        min_compress = getattr(config_gold, "MIN_PROFIT_COMPRESS_USD", 0.75)
-        stall_sec = getattr(config_gold, "STALL_DETECTION_SECONDS", 20)
-        pullback_tol = getattr(config_gold, "PEAK_PULLBACK_TOLERANCE_USD", 0.20)
+        time_decay_mins = getattr(config_gold, "TIME_DECAY_MINUTES", 6.0)
+        is_sluggish = (elapsed_min >= time_decay_mins)
+
+        if is_sluggish:
+            # Sluggish Trade (> 6 mins): Lower threshold to bank +$0.40 - $0.60
+            min_compress = getattr(config_gold, "DECAYED_PROFIT_TRIGGER_USD", 0.40)
+            stall_sec = getattr(config_gold, "DECAYED_STALL_SECONDS", 15)
+            pullback_tol = getattr(config_gold, "DECAYED_PULLBACK_TOLERANCE_USD", 0.15)
+            min_harvest_floor = 0.30
+            stall_target = 0.40
+            tag_name = f"Sluggish ({elapsed_min:.1f}m)"
+        else:
+            # Fresh Scalp (<= 6 mins): Target standard momentum +$0.75 - $1.20+
+            min_compress = getattr(config_gold, "MIN_PROFIT_COMPRESS_USD", 0.75)
+            stall_sec = getattr(config_gold, "STALL_DETECTION_SECONDS", 20)
+            pullback_tol = getattr(config_gold, "PEAK_PULLBACK_TOLERANCE_USD", 0.20)
+            min_harvest_floor = 0.60
+            stall_target = 0.90
+            tag_name = "Momentum"
 
         if profit_dist >= min_compress:
             if pos_data.get("profit_start_time") is None:
@@ -234,14 +272,14 @@ class GoldOrderManager(BaseOrderManager):
 
             peak_age = time.time() - pos_data.get("peak_time", time.time())
 
-            # Condition A: Profit touched >= $0.85 and pulled back by 20¢ while still in solid green (>= $0.60)
-            is_pullback_exit = (peak_profit >= 0.85 and profit_dist <= (peak_profit - pullback_tol) and profit_dist >= 0.60)
-            # Condition B: Floating in solid profit (>= $0.90) and stalled for >= 20 seconds without a new high
-            is_stall_exit = (profit_dist >= 0.90 and peak_age >= stall_sec)
+            # Condition A: Pullback from peak while still in harvest zone
+            is_pullback_exit = (peak_profit >= (min_compress + 0.10) and profit_dist <= (peak_profit - pullback_tol) and profit_dist >= min_harvest_floor)
+            # Condition B: Floating in solid profit and stalled for stall_sec without printing higher high
+            is_stall_exit = (profit_dist >= stall_target and peak_age >= stall_sec)
 
             if is_pullback_exit or is_stall_exit:
                 detail = f"Pullback from ${peak_profit:.2f}" if is_pullback_exit else f"Stalled for {int(peak_age)}s"
-                exit_reason = f"TP Magnet Exit (+${profit_dist:.2f} | {detail})"
+                exit_reason = f"TP Magnet Exit [{tag_name}] (+${profit_dist:.2f} | {detail})"
                 logger.info(f"🧲 {exit_reason} on Gold #{ticket}")
                 self.close_position(p, reason=exit_reason)
                 return

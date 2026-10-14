@@ -154,10 +154,10 @@ class GoldScalperBot:
         """Retrieves active positions placed by this Gold Scalper."""
         return self.order_manager.get_gold_positions()
 
-    def manage_gold_positions(self, atr_val: float, current_m5_bar_time: int = 0):
-        """Manages Closed Trade Detection, Partial TP, Break-Even, and Dynamic ATR Trailing Stop."""
+    def manage_gold_positions(self, atr_val: float, current_m5_bar_time: int = 0, current_sig: Optional[str] = None):
+        """Manages Closed Trade Detection, Partial TP, Break-Even, Dynamic TP Magnet, and Early Defense."""
         active = self.get_gold_positions()
-        return self.order_manager.manage_gold_positions(atr_val, current_m5_bar_time, positions=active)
+        return self.order_manager.manage_gold_positions(atr_val, current_m5_bar_time, positions=active, current_sig=current_sig)
 
     def execute_scalp(self, sig: str, atr_val: float, decision_basis: Optional[dict] = None):
         """Executes a validated Gold scalp order."""
@@ -378,8 +378,8 @@ class GoldScalperBot:
                     metrics = analysis.get("metrics", {})
                     atr_val = metrics.get("atr", 2.50)
 
-                    # 3. Active position management (Partial TP, BE, Trailing Stop, Exit Logging)
-                    self.manage_gold_positions(atr_val, current_m5_bar_time)
+                    # 3. Active position management (Partial TP, BE, Trailing Stop, Exit Logging, Early Defense)
+                    self.manage_gold_positions(atr_val, current_m5_bar_time, current_sig=sig)
                     active_positions = self.get_gold_positions()
 
                     # 4. Check Cooldown (1 candle after TP/Win, 2 candles after SL/Loss)

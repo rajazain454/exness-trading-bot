@@ -92,6 +92,15 @@ MIN_PROFIT_COMPRESS_USD = 0.75 # Start monitoring for hesitation once profit >= 
 STALL_DETECTION_SECONDS = 20 # If profit >= $0.75 and price stalls for 20s or pulls back 20¢ from peak, bank profit!
 PEAK_PULLBACK_TOLERANCE_USD = 0.20 # If profit pulls back 20¢ from peak after hitting $0.85+, exit immediately!
 
+# Time-Decay Profit Magnet (Harvesting sluggish trades after 6 minutes)
+TIME_DECAY_MINUTES = 6.0           # After 6 minutes, trade is classified as sluggish
+DECAYED_PROFIT_TRIGGER_USD = 0.40  # Lower profit trigger to +$0.40 after 6 minutes (banks +$0.40 - $0.60)
+DECAYED_STALL_SECONDS = 15         # Exit if stalled for 15s when profit >= $0.40
+DECAYED_PULLBACK_TOLERANCE_USD = 0.15 # Exit if profit pulls back 15¢ from peak when profit >= $0.40
+
+# Early Structural Invalidation Defense (Cuts losing trades early if trend flips against us)
+ENABLE_EARLY_STRUCTURE_DEFENSE = True # Exit early if market structure or signal flips against position
+
 # Safe Ratchet Trailing Stop (NO Premature Breakeven Choking!)
 ENABLE_TRAILING_STOP = True
 TRAILING_PROFIT_TRIGGER_USD = 1.30 # Only trail SL once profit exceeds +$1.30 (never chokes early at +$0.50!)
