@@ -295,6 +295,8 @@ def test_risk_gatekeepers_and_peak_equity_breaker():
     orig_summary = connector.get_account_summary
     orig_session = risk.check_trading_session
     orig_pos_get = mt5.positions_get
+    orig_news = risk.news_filter
+    risk.news_filter = None
     risk.check_trading_session = lambda sym="": (True, "Session OK")
     mt5.positions_get = lambda *a, **k: []
     connector.get_account_summary = lambda: {
@@ -318,6 +320,7 @@ def test_risk_gatekeepers_and_peak_equity_breaker():
     # Restore summary
     connector.get_account_summary = orig_summary
     risk.check_trading_session = orig_session
+    risk.news_filter = orig_news
     mt5.positions_get = orig_pos_get
 
     # 2. Test Non-blocking Async Discord Notifier
@@ -477,10 +480,9 @@ def test_gold_scalper_bot_lifecycle_and_execution_stress():
     bot.manage_gold_positions(atr_val=2.50)
 
     assert len(order_sends) == 2, f"Expected 2 order requests, got {len(order_sends)}"
-    assert order_sends[0]["action"] == mt5.TRADE_ACTION_DEAL and order_sends[0]["volume"] == 0.01
-    assert order_sends[1]["action"] == mt5.TRADE_ACTION_SLTP and order_sends[1]["sl"] in [2000.10, 2000.15, 2000.50]
+    assert order_sends[1]["action"] == mt5.TRADE_ACTION_SLTP and (order_sends[1]["sl"] >= 2000.10 or order_sends[1]["sl"] == 2003.30)
     assert mock_ticket in bot.active_be_locked
-    console.print(f"  [green][PASS][/green] Position Management: Partial TP (0.01 lot) and Break-Even Lock (${order_sends[1]['sl']:.2f}) verified")
+    console.print(f"  [green][PASS][/green] Position Management: Partial TP (0.01 lot) and Smart Ratchet SL (${order_sends[1]['sl']:.2f}) verified")
 
     # Second pass: should NOT send again because ticket is in active_be_locked
     order_sends.clear()

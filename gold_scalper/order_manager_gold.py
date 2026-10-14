@@ -126,8 +126,8 @@ class GoldOrderManager(BaseOrderManager):
         tp1_mult = getattr(config_gold, "PARTIAL_TP_ATR_MULT", getattr(config_gold, "PARTIAL_TP_RATIO", 1.0))
         target_tp1 = atr_val * tp1_mult
         be_buffer = getattr(config_gold, "BREAK_EVEN_BUFFER_USD", getattr(config_gold, "BREAK_EVEN_BUFFER_PIPS", 2.0) * 0.10)
-        trail_dist = round(atr_val * config_gold.TRAILING_ATR_MULT, digits)
-        trail_step = getattr(config_gold, "TRAILING_STEP_USD", 0.25)
+        trail_dist = getattr(config_gold, "TRAILING_PROFIT_DISTANCE_USD", round(atr_val * getattr(config_gold, "TRAILING_ATR_MULT", 1.25), digits))
+        trail_step = getattr(config_gold, "TRAILING_STEP_USD", 0.20)
 
         for p in active_positions:
             direction = 1 if p.type == mt5.ORDER_TYPE_BUY else -1
@@ -157,7 +157,15 @@ class GoldOrderManager(BaseOrderManager):
         trail_dist: float,
         trail_step: float,
     ):
-        """Unified position management routine for both BUY and SELL Gold scalps."""
+        """
+        Smart Adaptive Position Management:
+        1. Dynamic TP Magnet (Adaptive Profit Compression / Exit):
+           Monitors hesitation once profit >= +$0.75. If profit pulls back 20¢ from peak
+           or stalls for >= 20 seconds, banks the profit immediately (matching manual scalping wins).
+        2. Safe Ratchet Trailing Stop (NO Premature Breakeven!):
+           Only activates when floating profit exceeds +$1.30, maintaining a wide $0.70 breathing
+           cushion so the trade is never choked prematurely at +$0.50.
+        """
         entry = p.price_open
         ticket = p.ticket
         cur_sl = p.sl
@@ -167,62 +175,95 @@ class GoldOrderManager(BaseOrderManager):
         current_price = tick.bid if is_buy else tick.ask
         profit_dist = (current_price - entry) if is_buy else (entry - current_price)
 
-        # Stage 1: Partial TP and Break-Even lock
-        if profit_dist >= target_tp1 and ticket not in self.active_be_locked:
-            if cur_vol >= (min_vol * 2):
-                close_vol = round(cur_vol / 2.0, 2)
-                close_order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
-                req = {
-                    "action": mt5.TRADE_ACTION_DEAL,
-                    "position": ticket,
-                    "symbol": self.symbol,
-                    "volume": close_vol,
-                    "type": close_order_type,
-                    "price": current_price,
-                    "deviation": self.deviation_points,
-                    "magic": self.magic_number,
-                    "comment": "Gold Scalp TP1 Partial",
-                    "type_filling": self.get_filling_mode(self.symbol),
-                }
-                res = mt5.order_send(req)
-                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                    logger.info(f"🎯 TP1 hit on Gold #{ticket}: Closed {close_vol} lots @ {current_price:.2f}")
+        # Retrieve or initialize position state tracking
+        if ticket not in self.tracked_positions:
+            self.tracked_positions[ticket] = {
+                "ticket": ticket,
+                "symbol": self.symbol,
+                "signal": "BUY" if is_buy else "SELL",
+                "lot": cur_vol,
+                "entry": entry,
+                "sl": cur_sl,
+                "tp": p.tp,
+                "peak_profit": profit_dist,
+                "peak_time": time.time(),
+                "profit_start_time": time.time() if profit_dist > 0 else None,
+                "entry_time": getattr(p, "time", time.time()),
+            }
 
-            new_sl = round(entry + (be_buffer * direction), digits)
-            is_better_sl = (new_sl > cur_sl) if is_buy else (cur_sl == 0 or new_sl < cur_sl)
-            if is_better_sl:
-                mod_req = {
-                    "action": mt5.TRADE_ACTION_SLTP,
-                    "position": ticket,
-                    "symbol": self.symbol,
-                    "sl": new_sl,
-                    "tp": p.tp,
-                    "magic": self.magic_number,
-                }
-                res = mt5.order_send(mod_req)
-                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                    self.active_be_locked.add(ticket)
-                    if ticket in self.tracked_positions:
-                        self.tracked_positions[ticket]["be_locked"] = True
-                    self.trailing_sl[ticket] = new_sl
-                    self.last_trail_price[ticket] = current_price
-                    logger.info(f"🛡️ Risk-Free Lock: SL moved to Break-Even ({new_sl:.2f}) on Gold #{ticket}")
+        pos_data = self.tracked_positions[ticket]
 
-        # Stage 2: Dynamic ATR Trailing Stop (Active once Break-Even is locked)
-        elif config_gold.ENABLE_TRAILING_STOP and ticket in self.active_be_locked:
+        # Update peak floating profit observed
+        if profit_dist > pos_data.get("peak_profit", 0.0):
+            pos_data["peak_profit"] = profit_dist
+            pos_data["peak_time"] = time.time()
+
+        peak_profit = pos_data.get("peak_profit", 0.0)
+
+        # Stage 0: Scaled Multi-lot Partial TP (for accounts trading >= 0.02 lot)
+        if cur_vol >= (min_vol * 2) and profit_dist >= target_tp1 and ticket not in self.active_be_locked:
+            close_vol = round(cur_vol / 2.0, 2)
+            close_order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
+            req = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "position": ticket,
+                "symbol": self.symbol,
+                "volume": close_vol,
+                "type": close_order_type,
+                "price": current_price,
+                "deviation": self.deviation_points,
+                "magic": self.magic_number,
+                "comment": "Gold Scalp TP1 Partial",
+                "type_filling": self.get_filling_mode(self.symbol),
+            }
+            res = mt5.order_send(req)
+            if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                self.active_be_locked.add(ticket)
+                logger.info(f"🎯 TP1 hit on Gold #{ticket}: Closed {close_vol} lots @ {current_price:.2f}")
+
+        # -------------------------------------------------------------
+        # 1. DYNAMIC TP MAGNET (Adaptive Profit Compression / Stall Exit)
+        # -------------------------------------------------------------
+        min_compress = getattr(config_gold, "MIN_PROFIT_COMPRESS_USD", 0.75)
+        stall_sec = getattr(config_gold, "STALL_DETECTION_SECONDS", 20)
+        pullback_tol = getattr(config_gold, "PEAK_PULLBACK_TOLERANCE_USD", 0.20)
+
+        if profit_dist >= min_compress:
+            if pos_data.get("profit_start_time") is None:
+                pos_data["profit_start_time"] = time.time()
+
+            peak_age = time.time() - pos_data.get("peak_time", time.time())
+
+            # Condition A: Profit touched >= $0.85 and pulled back by 20¢ while still in solid green (>= $0.60)
+            is_pullback_exit = (peak_profit >= 0.85 and profit_dist <= (peak_profit - pullback_tol) and profit_dist >= 0.60)
+            # Condition B: Floating in solid profit (>= $0.90) and stalled for >= 20 seconds without a new high
+            is_stall_exit = (profit_dist >= 0.90 and peak_age >= stall_sec)
+
+            if is_pullback_exit or is_stall_exit:
+                detail = f"Pullback from ${peak_profit:.2f}" if is_pullback_exit else f"Stalled for {int(peak_age)}s"
+                exit_reason = f"TP Magnet Exit (+${profit_dist:.2f} | {detail})"
+                logger.info(f"🧲 {exit_reason} on Gold #{ticket}")
+                self.close_position(p, reason=exit_reason)
+                return
+
+        # -------------------------------------------------------------
+        # 2. SAFE RATCHET TRAILING STOP (NO Premature Breakeven Choking!)
+        # -------------------------------------------------------------
+        # Never moves SL at +$0.50!
+        # Only activates when profit is already past +$1.30, maintaining a wide $0.70 breathing cushion.
+        trail_trigger = getattr(config_gold, "TRAILING_PROFIT_TRIGGER_USD", 1.30)
+        trail_buffer = getattr(config_gold, "TRAILING_PROFIT_DISTANCE_USD", 0.70)
+        ratchet_step = getattr(config_gold, "TRAILING_STEP_USD", 0.20)
+
+        if getattr(config_gold, "ENABLE_TRAILING_STOP", True) and profit_dist >= trail_trigger:
             if is_buy:
-                target_sl = round(current_price - trail_dist, digits)
-                stored_sl = self.trailing_sl.get(ticket)
-                last_sl = max(cur_sl, stored_sl) if stored_sl is not None else cur_sl
-                last_price = self.last_trail_price.get(ticket) or entry
-                can_advance = (current_price > last_price + trail_step) and (target_sl >= last_sl + trail_step)
+                target_sl = round(current_price - trail_buffer, digits)
+                stored_sl = self.trailing_sl.get(ticket, cur_sl)
+                can_advance = (target_sl >= stored_sl + ratchet_step) and (target_sl > cur_sl)
             else:
-                target_sl = round(current_price + trail_dist, digits)
-                stored_sl = self.trailing_sl.get(ticket)
-                fallback_sl = cur_sl if cur_sl > 0 else (target_sl + 1.0)
-                last_sl = min(cur_sl, stored_sl) if (stored_sl is not None and cur_sl > 0) else fallback_sl
-                last_price = self.last_trail_price.get(ticket) or entry
-                can_advance = (current_price < last_price - trail_step) and (target_sl <= last_sl - trail_step)
+                target_sl = round(current_price + trail_buffer, digits)
+                stored_sl = self.trailing_sl.get(ticket, cur_sl if cur_sl > 0 else (target_sl + 1.0))
+                can_advance = (cur_sl == 0 or target_sl <= stored_sl - ratchet_step) and (cur_sl == 0 or target_sl < cur_sl)
 
             if can_advance:
                 mod_req = {
@@ -236,8 +277,7 @@ class GoldOrderManager(BaseOrderManager):
                 res = mt5.order_send(mod_req)
                 if res and res.retcode == mt5.TRADE_RETCODE_DONE:
                     self.trailing_sl[ticket] = target_sl
-                    self.last_trail_price[ticket] = current_price
-                    logger.info(f"📈 Trailing Stop Advanced on Gold #{ticket}: SL -> ${target_sl:.2f} (Locking profit)")
+                    logger.info(f"📈 Smart Ratchet SL Advanced on Gold #{ticket}: SL -> ${target_sl:.2f} (Profit: +${profit_dist:.2f}, Cushion: ${trail_buffer:.2f})")
                     try:
                         if self.notifier and getattr(self.notifier, "enabled", False):
                             self.notifier.notify_trailing_stop_updated(self.symbol, ticket, target_sl)
@@ -245,7 +285,7 @@ class GoldOrderManager(BaseOrderManager):
                         logger.warning(f"Discord notify error: {notify_err}")
 
     def execute_scalp(self, sig: str, atr_val: float, decision_basis: Optional[Dict[str, Any]] = None) -> Optional[int]:
-        """Executes a validated Gold scalp order with dynamic 1:2 R:R matching the EA."""
+        """Executes a validated Gold scalp order with wide structural breathing room."""
         # Double-check position count immediately
         current_positions = self.get_gold_positions()
         if len(current_positions) >= config_gold.MAX_OPEN_POSITIONS:
@@ -266,7 +306,7 @@ class GoldOrderManager(BaseOrderManager):
             return None
 
         # Volatility Shield: Disallow scalping when ATR is wild (NY open / high impact spikes)
-        max_allowed_atr = getattr(config_gold, "MAX_ALLOWED_ATR_USD", 3.50)
+        max_allowed_atr = getattr(config_gold, "MAX_ALLOWED_ATR_USD", 4.00)
         if atr_val > max_allowed_atr:
             logger.warning(
                 f"❌ Execution blocked: Current M5 Gold ATR (${atr_val:.2f}) exceeds maximum allowed (${max_allowed_atr:.2f}). Market in wild volatility expansion."
@@ -275,16 +315,15 @@ class GoldOrderManager(BaseOrderManager):
 
         digits = info.digits
         entry = tick.ask if sig == "BUY" else tick.bid
-        
-        # Strict hard ceiling on Stop Loss: Max loss on Gold is strictly capped at MAX_SL_DOLLARS ($2.50)
-        max_sl_cap = getattr(config_gold, "MAX_SL_DOLLARS", 2.50)
-        stop_dist = round(min(max_sl_cap, atr_val * config_gold.ATR_SL_MULTIPLIER), digits)
 
-        # Dynamic Scalp Take Profit with hard $3.00 - $3.50 cap
-        raw_tp_dist = stop_dist * config_gold.ATR_TP_MULTIPLIER
-        max_tp_cap = getattr(config_gold, "MAX_TP_DOLLARS", 3.50)
-        min_tp_floor = getattr(config_gold, "MIN_TP_DOLLARS", 2.50)
-        tp_dist = round(min(max_tp_cap, max(min_tp_floor, raw_tp_dist)), digits)
+        # Wide Structural Stop Loss: Gives Gold $3.80 - $4.50 of breathing room against normal noise
+        max_sl_cap = getattr(config_gold, "MAX_SL_DOLLARS", 4.50)
+        atr_mult = getattr(config_gold, "ATR_SL_MULTIPLIER", 1.30)
+        stop_dist = round(min(max_sl_cap, max(3.50, atr_val * atr_mult)), digits)
+
+        # Dynamic Initial Take Profit ($1.80) to be actively managed by the TP Magnet
+        init_tp = getattr(config_gold, "INITIAL_TP_DOLLARS", 1.80)
+        tp_dist = round(init_tp, digits)
 
         sl = round(entry - stop_dist if sig == "BUY" else entry + stop_dist, digits)
         tp = round(entry + tp_dist if sig == "BUY" else entry - tp_dist, digits)

@@ -384,9 +384,10 @@ class RiskManager:
         if not corr_ok:
             return False, corr_reason
 
-        news_blackout, news_reason, _ = self.news_filter.is_news_blackout(symbol)
-        if news_blackout:
-            return False, news_reason
+        if getattr(config, "NEWS_FILTER_ENABLED", True) and self.news_filter is not None:
+            news_blackout, news_reason, _ = self.news_filter.is_news_blackout(symbol)
+            if news_blackout:
+                return False, news_reason
 
         acc = self.connector.get_account_summary()
         if not acc:

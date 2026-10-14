@@ -77,24 +77,28 @@ COOLDOWN_BARS_AFTER_LOSS = 2  # 2 M5 candles (10 mins) cooldown after SL / loss
 CONSECUTIVE_LOSS_LIMIT = 3   # Circuit breaker: pause after 3 consecutive losses
 CONSECUTIVE_LOSS_COOLDOWN_BARS = 6 # 6 M5 bars (30 min) cooling period after circuit breaker
 
-# Dynamic ATR Stop Loss & Take Profit for Gold
+# Dynamic ATR Stop Loss & Dynamic TP Magnet for Gold
 ATR_PERIOD = 14
-ATR_SL_MULTIPLIER = 1.15     # Tightened Stop Loss = 1.15 x ATR
-MAX_SL_DOLLARS = 2.50        # Hard ceiling on Stop Loss: Max loss on 0.01 lot is strictly -$2.50
-MAX_ALLOWED_ATR_USD = 3.50   # Volatility Shield: Disallow Gold scalping if M5 ATR exceeds $3.50 (e.g. news/NY open)
-ATR_TP_MULTIPLIER = 1.8      # Baseline dynamic Take Profit multiplier (1.8x ATR -> $3.00 - $3.50 target)
-MAX_TP_DOLLARS = 3.50        # Hard cap on Take Profit: max $3.00 - $3.50 profit on 0.01 lot ($3.50 price distance)
-MIN_TP_DOLLARS = 2.50        # Minimum TP floor ($2.50 price distance -> ensures positive R:R)
-USE_PARTIAL_TP = True
-PARTIAL_TP_ATR_MULT = 1.20   # TP1 partial close at 1.2x ATR distance (~$2.20 - $2.50 profit)
-PARTIAL_TP_RATIO = PARTIAL_TP_ATR_MULT # Backward-compatibility alias
-BREAK_EVEN_BUFFER_USD = 0.50 # Move SL to Entry + $0.50 when TP1 is banked (locks +$0.50 profit)
-BREAK_EVEN_BUFFER_PIPS = 5.0 # Legacy alias ($0.50 on Gold)
+ATR_SL_MULTIPLIER = 1.30     # Structural Stop Loss = 1.30 x ATR (~$4.00 - $4.50 breathing room)
+MAX_SL_DOLLARS = 4.50        # Structural SL ceiling: provides breathing room against 5-min noise (matches user manual wins)
+MAX_ALLOWED_ATR_USD = 4.00   # Volatility Shield: Disallow Gold scalping if M5 ATR exceeds $4.00 (e.g. news spikes)
 
-# Trailing Stop
+# Dynamic TP Magnet Parameters (Replicating User's Manual Win Pattern)
+INITIAL_TP_DOLLARS = 1.80    # Initial Take Profit target ($1.80 price distance)
+ATR_TP_MULTIPLIER = 1.8      # Baseline dynamic Take Profit multiplier (backward-compatibility alias)
+MAX_TP_DOLLARS = 3.50        # Hard cap on Take Profit
+MIN_TP_DOLLARS = 1.80        # Minimum TP floor
+MIN_PROFIT_COMPRESS_USD = 0.75 # Start monitoring for hesitation once profit >= +$0.75
+STALL_DETECTION_SECONDS = 20 # If profit >= $0.75 and price stalls for 20s or pulls back 20¢ from peak, bank profit!
+PEAK_PULLBACK_TOLERANCE_USD = 0.20 # If profit pulls back 20¢ from peak after hitting $0.85+, exit immediately!
+
+# Safe Ratchet Trailing Stop (NO Premature Breakeven Choking!)
 ENABLE_TRAILING_STOP = True
-TRAILING_ATR_MULT = 1.25     # Trailing distance = 1.25x ATR ($2.50 buffer)
-TRAILING_STEP_USD = 0.30     # Ratchet step: minimum $0.30 advance before updating SL
+TRAILING_PROFIT_TRIGGER_USD = 1.30 # Only trail SL once profit exceeds +$1.30 (never chokes early at +$0.50!)
+TRAILING_PROFIT_DISTANCE_USD = 0.70 # Maintain a healthy 70¢ trailing buffer so normal wiggles don't clip it
+TRAILING_STEP_USD = 0.20     # Ratchet step: minimum $0.20 advance before updating SL
+TRAILING_ATR_MULT = 1.25     # Backward-compatibility alias
+
 
 # ==========================================
 # FILTERS & SAFETY GUARDS
