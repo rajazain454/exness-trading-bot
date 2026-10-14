@@ -398,8 +398,9 @@ class GoldScalperStrategy:
                     "metrics": metrics
                 }
 
-        # Gate 2: Extreme Choppiness Gate (CHOP > 62.0)
-        if chop_val > 62.0:
+        # Gate 2: Extreme Choppiness Gate (Unified with config_gold.MAX_CHOP_INDEX)
+        chop_gate = getattr(config_gold, "MAX_CHOP_INDEX", 61.8)
+        if chop_val > chop_gate:
             return {
                 "signal": "HOLD",
                 "confidence": 0.0,
@@ -407,7 +408,7 @@ class GoldScalperStrategy:
                 "grade": "NONE",
                 "regime": regime,
                 "confluence_score": 0,
-                "reason": f"Chop Gate: Gold in extreme flat compression (CHOP {chop_val:.1f} > 62.0).",
+                "reason": f"Chop Gate: Gold in extreme flat compression (CHOP {chop_val:.1f} > {chop_gate:.1f}).",
                 "metrics": metrics
             }
 
