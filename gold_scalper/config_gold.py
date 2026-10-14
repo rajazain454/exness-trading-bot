@@ -104,9 +104,12 @@ MIN_WICK_PERCENT = 15.0      # Minimum absorption wick % required (Walk-Forward 
 MAX_HOLD_BARS_M5 = 24        # Time exit: close after 24 M5 bars / 2 hours
 MAX_CHOP_INDEX = 50.0        # Choppiness index reference (Walk-Forward floor)
 MIN_ADX_THRESHOLD = 20.0     # ADX trend strength reference
-Z_SCORE_PULLBACK_MAX = 1.5   # Z-Score limit: filters exhausted spikes, raising OOS win rate to 64.5%
+Z_SCORE_PULLBACK_MAX = 1.5   # Z-Score limit: filters exhausted spikes
+MIN_CONFLUENCE_THRESHOLD = 75 # Strict Grade A threshold: Minimum 75/100 points required (No low-conviction trades)
+ENFORCE_STRICT_H1_ALIGNMENT = True # Zero counter-trend trades: 100% ban trades conflicting with H1 macro trend
 NEWS_FILTER_ENABLED = True   # Halt 30m before and after High-Impact US news
 NEWS_PRE_BUFFER_MINS = 30    # Minutes before news event to halt entries
 NEWS_POST_BUFFER_MINS = 30   # Minutes after news event to resume entries
 MAGIC_NUMBER = 777001        # Unique Magic Number for Gold Scalper
 DAILY_REPORT_HOUR_UTC = 0    # 00:00 UTC End-of-Day Digest
+

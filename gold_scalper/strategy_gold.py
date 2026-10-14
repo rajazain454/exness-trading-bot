@@ -36,10 +36,10 @@ class GoldScalperStrategy:
         self.z_max = config_gold.Z_SCORE_PULLBACK_MAX
         self.min_wick_ratio = getattr(config_gold, "MIN_WICK_PERCENT", 15.0) / 100.0
         self.liquidity_engine = GoldLiquidityEngine(sweep_min_usd=0.20, min_rejection_wick=self.min_wick_ratio)
-        self.min_confluence_threshold = 70  # Higher conviction threshold for Gold (Grade A baseline)
+        self.min_confluence_threshold = getattr(config_gold, "MIN_CONFLUENCE_THRESHOLD", 75)  # Strict Grade A threshold (75+ pts)
         self.ml_engine = GoldMLProbabilityEngine(
             min_p_win=0.55,
-            min_ev_r=0.15,
+            min_ev_r=0.10,
             sl_mult=config_gold.ATR_SL_MULTIPLIER,
             tp_mult=config_gold.ATR_TP_MULTIPLIER
         )
@@ -288,15 +288,23 @@ class GoldScalperStrategy:
         curr = df.iloc[-1]
         live_price = float(curr["close"])
         raw_time = sig_bar.get("time", curr.get("time", 0))
-        if hasattr(raw_time, "timestamp"):
+        if "time_dt" in sig_bar and pd.notnull(sig_bar["time_dt"]):
+            candle_dt = pd.to_datetime(sig_bar["time_dt"]).to_pydatetime()
+            candle_time = int(candle_dt.timestamp())
+        elif hasattr(raw_time, "timestamp"):
+            candle_dt = raw_time
             candle_time = int(raw_time.timestamp())
         else:
             try:
                 candle_time = int(raw_time)
+                candle_dt = datetime.fromtimestamp(candle_time, tz=timezone.utc)
             except Exception:
-                candle_time = 0
-        now_utc = datetime.now(timezone.utc)
-        hour = now_utc.hour
+                candle_dt = datetime.now(timezone.utc)
+                candle_time = int(candle_dt.timestamp())
+
+        # Anchor session and time calculations strictly to completed signal candle timestamp
+        hour = candle_dt.hour
+        dec_hour = hour + (candle_dt.minute / 60.0)
 
         # Base price metrics on completed signal candle
         close = float(sig_bar["close"])
@@ -359,9 +367,8 @@ class GoldScalperStrategy:
         # -------------------------------------------------------------
         # STRICT "DO NOT TRADE" SAFETY GATES
         # -------------------------------------------------------------
-        # Gate 1: Dual-Wave Institutional Liquidity Session Gate
+        # Gate 1: Dual-Wave Institutional Liquidity Session Gate (Candle-Timestamp Synchronized)
         if config_gold.AVOID_ASIAN_SESSION:
-            dec_hour = hour + (now_utc.minute / 60.0)
             w1_start = getattr(config_gold, "WAVE_1_START_HOUR_UTC", 8.0)
             w1_end = getattr(config_gold, "WAVE_1_END_HOUR_UTC", 11.5)
             w2_start = getattr(config_gold, "WAVE_2_START_HOUR_UTC", 13.0)
@@ -376,7 +383,7 @@ class GoldScalperStrategy:
                     "grade": "NONE",
                     "regime": regime,
                     "confluence_score": 0,
-                    "reason": f"Midday Lull Gate: Bank lunch pause ({w1_end:04.1f} - {w2_start:04.1f} UTC) avoids dead chop.",
+                    "reason": f"Midday Lull Gate: Candle at {dec_hour:04.1f} UTC is in bank lunch pause ({w1_end:04.1f} - {w2_start:04.1f} UTC).",
                     "metrics": metrics
                 }
             elif not ((w1_start <= dec_hour < w1_end) or (w2_start <= dec_hour < w2_end)):
@@ -387,7 +394,7 @@ class GoldScalperStrategy:
                     "grade": "NONE",
                     "regime": regime,
                     "confluence_score": 0,
-                    "reason": f"Session Gate: Outside active London/NY waves (08:00-11:30 or 13:00-17:00 UTC).",
+                    "reason": f"Session Gate: Candle at {dec_hour:04.1f} UTC is outside active London/NY waves (08:00-11:30 or 13:00-17:00 UTC).",
                     "metrics": metrics
                 }
 
@@ -502,8 +509,8 @@ class GoldScalperStrategy:
                     detected_setup = "SETUP_4_FVG_CONFLUENCE"
 
         # --- 7. MACRO H1 TREND ALIGNMENT (Max 15 pts) ---
-        macro_buy = 15 if h1_trend == "BULLISH" else (0 if h1_trend == "BEARISH" else 5)
-        macro_sell = 15 if h1_trend == "BEARISH" else (0 if h1_trend == "BULLISH" else 5)
+        macro_buy = 15 if h1_trend == "BULLISH" else 0
+        macro_sell = 15 if h1_trend == "BEARISH" else 0
 
         # --- 8. VOLUME CONFIRMATION (Max 10 pts) ---
         vol_confirmed = 10 if vol_ratio >= 1.10 else (5 if vol_ratio >= 0.90 else 0)
@@ -519,6 +526,19 @@ class GoldScalperStrategy:
         # Bound scores to 100
         buy_score = min(100, buy_score)
         sell_score = min(100, sell_score)
+
+        # Strict H1 Macro Trend Enforcement: ZERO counter-trend trades allowed!
+        # If H1 macro trend is BULLISH, SELL is 100% blocked (sell_score = 0)
+        # If H1 macro trend is BEARISH, BUY is 100% blocked (buy_score = 0)
+        # If H1 macro trend is NEUTRAL or UNKNOWN, neither direction is allowed (wait for clear macro trend)
+        if getattr(config_gold, "ENFORCE_STRICT_H1_ALIGNMENT", True):
+            if h1_trend == "BULLISH":
+                sell_score = 0
+            elif h1_trend == "BEARISH":
+                buy_score = 0
+            else:
+                buy_score = 0
+                sell_score = 0
 
         # Overextension check: suppress buy if Z-Score >= 1.5; suppress sell if Z-Score <= -1.5
         if z_score >= self.z_max:
@@ -538,6 +558,7 @@ class GoldScalperStrategy:
 
         # --- ML PROBABILISTIC & EXPECTED VALUE EVALUATION ---
         buy_features = {
+            "total_score": buy_score,
             "core_setup_pts": max(sweep_pts_buy, pullback_buy, retest_buy, vwap_mr_buy),
             "mss_pts": mss_pts_buy,
             "fvg_pts": fvg_buy,
@@ -551,6 +572,7 @@ class GoldScalperStrategy:
             "wick_ratio": lower_wick_ratio
         }
         sell_features = {
+            "total_score": sell_score,
             "core_setup_pts": max(sweep_pts_sell, pullback_sell, retest_sell, vwap_mr_sell),
             "mss_pts": mss_pts_sell,
             "fvg_pts": fvg_sell,
